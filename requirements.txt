@@ -13,3 +13,6 @@ vector
 kaleido
 nbformat
 jupyterlab
+fastjet
+pyarrow
+seaborn
