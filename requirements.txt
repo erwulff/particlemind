@@ -15,4 +15,3 @@ nbformat
 jupyterlab
 fastjet
 pyarrow
-seaborn
