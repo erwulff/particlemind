@@ -1,2 +1,2 @@
 # particlemind
-Self-supervised learning on particles.
+Self-supervised learning on HEP events.
