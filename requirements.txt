@@ -15,3 +15,4 @@ nbformat
 jupyterlab
 fastjet
 pyarrow
+pre-commit
