@@ -324,7 +324,6 @@ def create_hit_feature_matrix_and_mapping(hit_data, iev, collectionIDs, feats):
     return hit_feature_matrix, hit_idx_global_to_local, hit_idx_local_to_global
 
 
-# TODO: check correctnes of this function
 def create_track_to_hit_coo_matrix(event_data, iev, collectionIDs):
     """
     Creates the COO matrix indices and weights for the relationship between tracks and tracker hits.
@@ -395,7 +394,6 @@ def create_track_to_hit_coo_matrix(event_data, iev, collectionIDs):
     )
 
 
-# TODO: check correctness of this function
 def create_cluster_to_hit_coo_matrix(event_data, iev, collectionIDs):
     """
     Creates the COO matrix indices and weights for the relationship between clusters and calorimeter hits.
