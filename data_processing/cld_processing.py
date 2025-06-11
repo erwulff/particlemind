@@ -1,6 +1,6 @@
 import numpy as np
 import math
-import awkward
+import awkward as ak
 import vector
 
 from scipy.sparse import coo_matrix
@@ -189,7 +189,7 @@ def hits_to_features(hit_data, iev, coll, feats):
             (e.g., "position.x", "position.y", "position.z", "energy", "type", etc.).
 
     Returns:
-        awkward.Array: An Awkward Array containing the extracted features for the specified event
+        ak.Array: An ak Array containing the extracted features for the specified event
             and collection. The array includes an additional "subdetector" feature, which encodes
             the subdetector type:
             - 0 for ECAL
@@ -220,7 +220,7 @@ def hits_to_features(hit_data, iev, coll, feats):
         feat_arr[sdcoll][:] = 2
     else:
         feat_arr[sdcoll][:] = 3
-    return awkward.Array(feat_arr)
+    return ak.Array(feat_arr)
 
 
 def genparticle_track_adj(event_data, iev):
@@ -228,9 +228,9 @@ def genparticle_track_adj(event_data, iev):
     trk_to_gen_genidx = event_data["_SiTracksMCTruthLink_to/_SiTracksMCTruthLink_to.index"][iev]
     trk_to_gen_w = event_data["SiTracksMCTruthLink.weight"][iev]
 
-    genparticle_to_track_matrix_coo0 = awkward.to_numpy(trk_to_gen_genidx)
-    genparticle_to_track_matrix_coo1 = awkward.to_numpy(trk_to_gen_trkidx)
-    genparticle_to_track_matrix_w = awkward.to_numpy(trk_to_gen_w)
+    genparticle_to_track_matrix_coo0 = ak.to_numpy(trk_to_gen_genidx)
+    genparticle_to_track_matrix_coo1 = ak.to_numpy(trk_to_gen_trkidx)
+    genparticle_to_track_matrix_w = ak.to_numpy(trk_to_gen_w)
 
     return genparticle_to_track_matrix_coo0, genparticle_to_track_matrix_coo1, genparticle_to_track_matrix_w
 
@@ -291,7 +291,7 @@ def create_hit_feature_matrix(hit_data, iev, feats):
 
     # Combine all hit features into a single Record
     hit_feature_matrix = {
-        k: awkward.concatenate([hit_feature_matrix[i][k] for i in range(len(hit_feature_matrix))])
+        k: ak.concatenate([hit_feature_matrix[i][k] for i in range(len(hit_feature_matrix))])
         for k in hit_feature_matrix[0].fields
     }
 
@@ -385,11 +385,11 @@ def create_track_to_hit_coo_matrix(event_data, iev, collectionIDs):
             track_to_hit_matrix_w.append(1.0)  # Assuming weight is 1.0 for all associations
 
     return (
-        (
-            np.array(track_to_hit_matrix_coo0),
-            np.array(track_to_hit_matrix_coo1),
-            np.array(track_to_hit_matrix_w),
-        ),
+        {
+            "track_idx": np.array(track_to_hit_matrix_coo0),
+            "hit_idx": np.array(track_to_hit_matrix_coo1),
+            "weight": np.array(track_to_hit_matrix_w),
+        },
         hit_idx_local_to_global,
     )
 
@@ -450,11 +450,11 @@ def create_cluster_to_hit_coo_matrix(event_data, iev, collectionIDs):
             cluster_to_hit_matrix_w.append(1.0)  # Assuming weight is 1.0 for all associations
 
     return (
-        (
-            np.array(cluster_to_hit_matrix_coo0),
-            np.array(cluster_to_hit_matrix_coo1),
-            np.array(cluster_to_hit_matrix_w),
-        ),
+        {
+            "cluster_idx": np.array(cluster_to_hit_matrix_coo0),
+            "hit_idx": np.array(cluster_to_hit_matrix_coo1),
+            "weight": np.array(cluster_to_hit_matrix_w),
+        },
         calo_hit_idx_local_to_global,
     )
 
@@ -510,11 +510,11 @@ def process_calo_hit_data(event_data, iev, collectionIDs):
 
     return (
         hit_features,
-        (
-            np.array(genparticle_to_hit_matrix_coo0),
-            np.array(genparticle_to_hit_matrix_coo1),
-            np.array(genparticle_to_hit_matrix_w),
-        ),
+        {
+            "gen_idx": np.array(genparticle_to_hit_matrix_coo0),
+            "hit_idx": np.array(genparticle_to_hit_matrix_coo1),
+            "weight": np.array(genparticle_to_hit_matrix_w),
+        },
         hit_idx_local_to_global,
     )
 
@@ -584,11 +584,11 @@ def process_tracker_hit_data(event_data, iev, collectionIDs):
 
     return (
         hit_feature_matrix,  # Tracker hit feature matrix
-        (
-            np.array(genparticle_to_hit_matrix_coo0),
-            np.array(genparticle_to_hit_matrix_coo1),
-            np.array(genparticle_to_hit_matrix_w),
-        ),
+        {
+            "gen_idx": np.array(genparticle_to_hit_matrix_coo0),
+            "hit_idx": np.array(genparticle_to_hit_matrix_coo1),
+            "weight": np.array(genparticle_to_hit_matrix_w),
+        },
         hit_idx_local_to_global,
     )
 
@@ -603,7 +603,7 @@ def gen_to_features(event_data, iev):
     gen_arr = {k.replace(mc_coll + ".", ""): gen_arr[k] for k in gen_arr.fields}
 
     MCParticles_p4 = vector.awk(
-        awkward.zip(
+        ak.zip(
             {
                 "mass": gen_arr["mass"],
                 "x": gen_arr["momentum.x"],
@@ -645,7 +645,7 @@ def gen_to_features(event_data, iev):
     # ret["index"] = prop_data["_MCParticles_daughters/_MCParticles_daughters.index"][iev]
 
     # make all values numpy arrays
-    ret = {k: awkward.to_numpy(v) for k, v in ret.items()}
+    ret = {k: ak.to_numpy(v) for k, v in ret.items()}
 
     return ret
 
@@ -663,11 +663,11 @@ def track_to_features(event_data, iev):
     Extracts track features from the provided property data for a specific event and track collection.
 
     Args:
-        ev (uproot.models.TTree.Model_TTree_v20): The event data containing track property data.
+        event_data (awdward.Array) The event data containing track property data.
         iev (int): The index of the event to extract data for.
 
     Returns:
-        awkward.Record: A record containing the extracted track features, including:
+        ak.Record: A record containing the extracted track features, including:
             - "type", "chi2", "ndf": Basic track properties.
             - "dEdx", "dEdxError": Energy deposition and its error.
             - "radiusOfInnermostHit": Radius of the innermost hit for each track.
@@ -721,19 +721,19 @@ def track_to_features(event_data, iev):
     trackstate_idx = event_data[track_coll][track_coll + ".trackStates_begin"][iev]
     # get the properties of the track at the first track state (at the origin)
     for k in ["tanLambda", "D0", "phi", "omega", "Z0", "time"]:
-        ret[k] = awkward.to_numpy(
+        ret[k] = ak.to_numpy(
             event_data["_SiTracks_Refitted_trackStates"]["_SiTracks_Refitted_trackStates." + k][iev][trackstate_idx]
         )
 
-    ret["pt"] = awkward.to_numpy(track_pt(ret["omega"]))
-    ret["px"] = awkward.to_numpy(np.cos(ret["phi"])) * ret["pt"]
-    ret["py"] = awkward.to_numpy(np.sin(ret["phi"])) * ret["pt"]
+    ret["pt"] = ak.to_numpy(track_pt(ret["omega"]))
+    ret["px"] = ak.to_numpy(np.cos(ret["phi"])) * ret["pt"]
+    ret["py"] = ak.to_numpy(np.sin(ret["phi"])) * ret["pt"]
     ret["pz"] = ret["pt"] * ret["tanLambda"]
     ret["p"] = np.sqrt(ret["px"] ** 2 + ret["py"] ** 2 + ret["pz"] ** 2)
     cos_theta = np.divide(ret["pz"], ret["p"], where=ret["p"] > 0)
     theta = np.arccos(cos_theta)
     tt = np.tan(theta / 2.0)
-    eta = awkward.to_numpy(-np.log(tt, where=tt > 0))
+    eta = ak.to_numpy(-np.log(tt, where=tt > 0))
     eta[tt <= 0] = 0.0
     ret["eta"] = eta
 
@@ -770,7 +770,7 @@ def cluster_to_features(event_data, iev, cluster_features=["position.x", "positi
             raise ValueError(f"Feature {feat} not found in PandoraClusters.")
         # Extract cluster features
 
-    return {f"{feat}": awkward.to_numpy(cluster_data[f"PandoraClusters.{feat}"][iev]) for feat in cluster_features}
+    return {f"{feat}": ak.to_numpy(cluster_data[f"PandoraClusters.{feat}"][iev]) for feat in cluster_features}
 
 
 def create_genparticle_to_genparticle_coo_matrix(event_data, iev):
@@ -806,11 +806,11 @@ def create_genparticle_to_genparticle_coo_matrix(event_data, iev):
             coo_cols.append(daughter_idx)
             coo_weights.append(1.0)  # Assuming weight is 1.0 for all associations
 
-    return (
-        np.array(coo_rows),
-        np.array(coo_cols),
-        np.array(coo_weights),
-    )
+    return {
+        "parent_idx": np.array(coo_rows),
+        "daughter_idx": np.array(coo_cols),
+        "weight": np.array(coo_weights),
+    }
 
 
 def create_genparticle_to_genparticle_coo_matrix2(event_data, iev):
@@ -845,8 +845,8 @@ def create_genparticle_to_genparticle_coo_matrix2(event_data, iev):
             coo_cols.append(daughter_idx)
             coo_weights.append(1.0)  # Assuming weight is 1.0 for all associations
 
-    return (
-        np.array(coo_rows),
-        np.array(coo_cols),
-        np.array(coo_weights),
-    )
+    return {
+        "parent_idx": np.array(coo_rows),
+        "daughter_idx": np.array(coo_cols),
+        "weight": np.array(coo_weights),
+    }
