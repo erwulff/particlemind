@@ -41,9 +41,10 @@ def process_root_files_to_parquet(input_dir, output_dir, max_root_files=None):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     root_counter = 0
-    total_files_to_porcess = max_root_files or len(list(Path(input_dir).rglob("*.root")))
+    root_file_list = list(Path(input_dir).rglob("*.root"))
+    total_files_to_porcess = max_root_files or len(root_file_list)
 
-    for root_file in tqdm(Path(input_dir).rglob("*.root"), desc="Processing ROOT files", total=total_files_to_porcess):
+    for root_file in tqdm(sorted(root_file_list), desc="Processing ROOT files", total=total_files_to_porcess):
         if max_root_files is not None and root_counter >= max_root_files:
             logging.info(f"Reached max_root_files limit: {max_root_files}. Stopping processing.")
             break
