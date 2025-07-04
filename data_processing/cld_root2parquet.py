@@ -137,10 +137,10 @@ def process_root_files_to_parquet(input_dir, output_dir, max_root_files=None):
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Process ROOT files and save features/matrices to HDF5 format.")
-    parser.add_argument("--input_dir", type=str, required=True, help="Directory containing ROOT files.")
+    parser = argparse.ArgumentParser(description="Process ROOT files and save features/matrices to parquet format.")
+    parser.add_argument("-i", "--input_dir", type=str, required=True, help="Directory containing ROOT files.")
     parser.add_argument("--max_events", type=int, default=None, help="Maximum number of events to process.")
-    parser.add_argument("-o", "--output_dir", type=str, default="./output", help="Directory to save HDF5 files.")
+    parser.add_argument("-o", "--output_dir", type=str, default="./output", help="Directory to save parquet files.")
     parser.add_argument("--max_root_files", type=int, default=None, help="Maximum number of ROOT files to process.")
 
     return parser.parse_args()
