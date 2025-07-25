@@ -37,7 +37,7 @@ def get_hit_labels(hit_idx, gen_idx, weights):
 
 
 class CLDHits(IterableDataset):
-    def __init__(self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8):
+    def __init__(self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8, nfiles=-1):
         """
         Initialize the dataset by storing the paths to all parquet files in the specified folder.
 
@@ -51,6 +51,7 @@ class CLDHits(IterableDataset):
         self.nsamples = nsamples
         if self.nsamples is not None:
             self.sample_counter = 0
+        self.nfiles = nfiles
 
         self.split = split
         if self.split is not None:
@@ -83,7 +84,7 @@ class CLDHits(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
             # Single-process data loading
-            files_to_process = self.parquet_files
+            files_to_process = self.parquet_files[:self.nfiles]
             logger.info(f"Processing {len(files_to_process)} files in single-process mode.")
 
         else:
@@ -117,10 +118,23 @@ class CLDHits(IterableDataset):
                     )
                 )
 
+
                 hit_labels = get_hit_labels(
                     hit_idx, gen_idx, weights
                 )  # This could be moved to the pre-processing step if needed
 
+                # new code to return per particle, not per event
+                for i in range(len(calo_hit_features)):
+                    if self.nsamples is not None and self.sample_counter >= self.nsamples:
+                        return
+                    self.sample_counter += 1
+
+                    yield {
+                            "hit_labels": hit_labels[i:i+1],  # Shape (1,) or (1, label_dim)
+                            "calo_hit_features": calo_hit_features[i:i+1],  # Shape (1, num_features)
+                        }
+
+                """
                 yield {
                     # "gen_idx": gen_idx,
                     # "hit_idx": hit_idx,
@@ -128,3 +142,4 @@ class CLDHits(IterableDataset):
                     "hit_labels": hit_labels,
                     "calo_hit_features": calo_hit_features,
                 }
+                """
