@@ -15,10 +15,11 @@ class Collater:
         dict: A dictionary containing padded and stacked inputs.
     """
 
-    def __init__(self, variable_size_keys="all", fixed_size_keys=None, **kwargs):
+    def __init__(self, variable_size_keys="all", fixed_size_keys=None, pad=-1, **kwargs):
         super(Collater, self).__init__(**kwargs)
         self.variable_size_keys = variable_size_keys
         self.fixed_size_keys = fixed_size_keys
+        self.pad = pad
 
     def __call__(self, inputs):
         ret = {}
@@ -32,7 +33,7 @@ class Collater:
             # get mask
             axis_sum = torch.sum(torch.abs(ret["calo_hit_features"]), dim = 2)
             ret["calo_hit_mask"] = torch.where(axis_sum > 0, 1.0, 0.0)
-            
+
             return ret
 
         # per-particle quantities need to be padded across events of different size
