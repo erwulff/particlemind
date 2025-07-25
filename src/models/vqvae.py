@@ -717,7 +717,7 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
         samples = samples[masks == 1]
 
     # create detached copy of the codebook to plot this
-    fig, axarr = plt.subplots(1, 5, figsize=(15, 3))
+    fig, axarr = plt.subplots(1, 5, figsize=(30, 6))
     # axarr = axarr.flatten()
 
     style_tokens = dict(color="forestgreen")
@@ -830,6 +830,8 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
     n_codes = model.vq_kwargs["num_codes"]
     bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
     ax.hist(idx, bins=bins)
+    ax.set_yscale("log")
+    print(idx)
     ax.set_title(
         "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that"
         " codebook entry)",

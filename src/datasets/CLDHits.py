@@ -111,10 +111,10 @@ class CLDHits(IterableDataset):
 
                 calo_hit_features = np.column_stack(
                     (
-                        calo_hit_features["position.x"].to_numpy() / 1000,
-                        calo_hit_features["position.y"].to_numpy() / 1000,
-                        calo_hit_features["position.z"].to_numpy() / 1000,
-                        calo_hit_features["energy"].to_numpy() * 100,
+                        calo_hit_features["position.x"].to_numpy() / 1e4,
+                        calo_hit_features["position.y"].to_numpy() / 1e4,
+                        calo_hit_features["position.z"].to_numpy() / 1e4,
+                        np.log(calo_hit_features["energy"].to_numpy()  * 1e2) / 1e1,
                     )
                 )
 

@@ -64,21 +64,21 @@ def main(args):
                             },
         #scheduler = None,
         model_kwargs={
-                    "input_dim":4,
-                    "latent_dim":4,
-                    "hidden_dim":128,
-                    "num_heads":2,
-                    "num_blocks":4,
-                    "alpha": 5,
+                    "input_dim": 4,
+                    "latent_dim": args.latent_dim,
+                    "hidden_dim": args.hidden_dim,
+                    "num_heads": args.num_heads,
+                    "num_blocks": args.num_blocks,
+                    "alpha": args.alpha,
                     "vq_kwargs":{
-                                "num_codes": 128,
-                            "beta": 0.9,
-                            "kmeans_init": True,
+                                "num_codes": args.num_codes,
+                            "beta": args.beta,
+                            "kmeans_init": args.kmeans_init,
                         #   "norm": "null",
                         # "cb_norm": "null",
-                            "affine_lr": 2,
-                            "sync_nu": 1,
-                            "replace_freq": 100,
+                            "affine_lr": args.affine_lr,
+                            "sync_nu": args.sync_nu,
+                            "replace_freq": args.replace_freq,
                             "dim": -1,
                         }
                    },
@@ -93,25 +93,38 @@ def main(args):
 if __name__ == "__main__":
     parser = ArgumentParser()
 
-    # PROGRAM level args
-    parser.add_argument("--data_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles")
-    parser.add_argument("--batch_size", type=int, default=512)
-    parser.add_argument("--num_files", type=int, default=10)
-
+    # PROGRAM ARGS
+    parser.add_argument("--gpu_id", type=str, default="0")
+    parser.add_argument("--precision", type=int, default=32, choices=[16, 32])
 
     parser.add_argument("--save_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/")
     parser.add_argument("--name", type=str, default="test")
     parser.add_argument("--project", type=str, default="vqvae_training")
     parser.add_argument( "--logger", type=str, default="wandb", choices=["tensorboard", "wandb"])
 
-    # TRAINER args
-    
-    parser.add_argument("--max_epochs", type=int, default=30)
-    parser.add_argument("--learning_rate", type=float, default=1e-2)
-    parser.add_argument("--weight_decay", type=float, default=1e-2)
+    # DATA ARGS
+    parser.add_argument("--data_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles")
+    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--num_files", type=int, default=10)
 
-    parser.add_argument("--gpu_id", type=str, default="0")
-    parser.add_argument("--precision", type=int, default=32, choices=[16, 32])
+    # TRAINER ARGS
+    parser.add_argument("--max_epochs", type=int, default=30)
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=1e-2)
+    
+    # MODEL args
+    parser.add_argument("--hidden_dim", type=int, default=128)
+    parser.add_argument("--latent_dim", type=int, default=16)
+    parser.add_argument("--num_blocks", type=int, default=3)
+    parser.add_argument("--num_heads", type=int, default=8)
+    parser.add_argument("--alpha", type=int, default=5)
+    parser.add_argument("--num_codes", type=int, default=512)
+    parser.add_argument("--beta", type=float, default=0.9)
+    parser.add_argument("--kmeans_init", type=bool, default=False)
+    parser.add_argument("--affine_lr", type=float, default=0.0)
+    parser.add_argument("--sync_nu", type=int, default=2)
+    parser.add_argument("--replace_freq", type=int, default=20)
+
 
 
 
