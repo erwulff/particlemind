@@ -318,7 +318,6 @@ class VQVAENormFormer(torch.nn.Module):
         self.output_projection = nn.Linear(hidden_dim, input_dim)
 
     def forward(self, x, mask):
-        print(x.shape)
         # encode
         x = self.input_projection(x)
         x = self.encoder_normformer(x, mask=mask)
@@ -337,8 +336,8 @@ class VQVAELightning(L.LightningModule):
 
     def __init__(
         self,
-        optimizer: torch.optim.Optimizer,
-        scheduler: torch.optim.lr_scheduler = None,
+        optimizer_kwargs = {},
+        #scheduler_kwargs = {},
         model_kwargs={},
         model_type="Transformer",
         **kwargs,
@@ -363,6 +362,8 @@ class VQVAELightning(L.LightningModule):
         self.validation_cnt = 0
         self.validation_output = {}
 
+        self.optimizer_kwargs = optimizer_kwargs
+
         # loss function (not used atm, since we calc MSE manually)
         self.criterion = torch.nn.MSELoss()
 
@@ -371,6 +372,22 @@ class VQVAELightning(L.LightningModule):
         self.val_x_reco = []
         self.val_mask = []
 
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            self.model.parameters(), **self.optimizer_kwargs)
+        """
+        if self.lr_scheduler:
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": self.lr_scheduler(optimizer),
+                    "interval": self.lr_scheduler_interval,
+                    "frequency": self.lr_scheduler_frequency,
+                },
+            }
+        """
+        return optimizer
+        
     def forward(self, x_particle, mask_particle):
         x_particle_reco, vq_out = self.model(x_particle, mask=mask_particle)
         return x_particle_reco, vq_out
@@ -405,11 +422,12 @@ class VQVAELightning(L.LightningModule):
 
         return loss
 
+    """
     def on_train_start(self) -> None:
         self.preprocessing_dict = (
             self.trainer.datamodule.hparams.dataset_kwargs_common.feature_dict
         )
-
+    """
     def on_train_epoch_start(self):
         logger.info(f"Epoch {self.trainer.current_epoch} starting.")
         self.epoch_train_start_time = time.time()  # start timing the epoch
@@ -468,8 +486,8 @@ class VQVAELightning(L.LightningModule):
             # log the plot
             plot_model(
                 self.model,
-                samples=batch["part_features"],
-                masks=batch["part_mask"],
+                samples=batch["calo_hit_features"],
+                masks=batch["calo_hit_mask"],
                 device=self.device,
                 saveas=plot_filename,
             )
@@ -647,22 +665,7 @@ class VQVAELightning(L.LightningModule):
         self.test_labels_concat = np.concatenate(self.test_labels)
         self.test_code_idx_concat = np.concatenate(self.test_code_idx)
 
-    def configure_optimizers(self) -> Dict[str, Any]:
-        """Configures optimizers and learning-rate schedulers to be used for training."""
-        optimizer = self.hparams.optimizer(params=self.parameters())
-        if self.hparams.scheduler is not None:
-            scheduler = self.hparams.scheduler(optimizer=optimizer)
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "monitor": "val_loss",
-                    "interval": "epoch",
-                    "frequency": 1,
-                },
-            }
-
-        return {"optimizer": optimizer}
+  
 
 
 def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None, saveas=None):
