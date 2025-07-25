@@ -1,5 +1,5 @@
+import numpy as np
 import torch
-
 
 # adapted from from: https://github.com/jpata/particleflow/blob/a3a08fe1e687987c661faad00fd5526e733be014/mlpf/model/PFDataset.py#L163
 class Collater:
@@ -28,6 +28,11 @@ class Collater:
                 ret[key] = torch.nn.utils.rnn.pad_sequence(
                     [torch.tensor(inp[key]).to(torch.float32) for inp in inputs], batch_first=True
                 )
+
+            # get mask
+            axis_sum = torch.sum(torch.abs(ret["calo_hit_features"]), dim = 2)
+            ret["calo_hit_mask"] = torch.where(axis_sum > 0, 1.0, 0.0)
+            
             return ret
 
         # per-particle quantities need to be padded across events of different size
