@@ -3,7 +3,7 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
 import logging
-import wandb
+
 
 from src.models.self_attention_transformer import SelfAttentionTransformer
 from models.losses import transformer_instance_loss, discriminative_loss
@@ -30,7 +30,6 @@ class TransformerLightningModule(pl.LightningModule):
 
         # Logging
         self.log("train_loss", loss)
-        wandb.log({"train_loss": loss})
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -42,7 +41,6 @@ class TransformerLightningModule(pl.LightningModule):
 
         # Logging
         self.log("val_loss", loss)
-        wandb.log({"val_loss": loss})
 
     def test_step(self, batch, batch_idx):
         x = batch["calo_hit_features"]
@@ -53,12 +51,11 @@ class TransformerLightningModule(pl.LightningModule):
 
         # Logging
         self.log("test_loss", loss)
-        wandb.log({"test_loss": loss})
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-        scheduler = None  # torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
-        return [optimizer], [scheduler]
+        # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        return [optimizer]  # , [scheduler]
 
 
 def get_loss_func(name):
@@ -82,13 +79,15 @@ def train(
     num_epochs=20,
     data_dir="data/CLDHits",
     gpus=0,
-    loss_function="instance",
+    loss_function="discriminative",
     ntrain=1.0,
     nval=1.0,
 ):
-    # Initialize wandb
-    wandb.init(
-        project="your_project_name",
+
+    wandb_logger = pl.loggers.WandbLogger(
+        project="test_project",
+        name=f"transformer_{input_size}_{output_size}_{embed_dim}_{num_layers}_{num_heads}_{ff_dim}",
+        log_model=False,
         config={
             "input_size": input_size,
             "output_size": output_size,
@@ -102,6 +101,7 @@ def train(
             "num_epochs": num_epochs,
             "data_dir": data_dir,
             "gpus": gpus,
+            "loss_function": loss_function,
         },
     )
 
@@ -111,7 +111,6 @@ def train(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=Collater("all"))
     val_loader = DataLoader(val_dataset, batch_size=batch_size, collate_fn=Collater("all"))
 
-    # Model and trainer
     model = SelfAttentionTransformer(
         input_size=input_size,
         output_size=output_size,
@@ -138,6 +137,7 @@ def train(
         limit_val_batches=nval,
         accelerator="gpu" if gpus > 0 else "cpu",
         strategy="ddp" if gpus > 1 else None,
+        logger=wandb_logger,
     )
 
     # Train the model
@@ -145,8 +145,6 @@ def train(
 
     # Test the model
     trainer.test(model, val_loader)  # TODO: Use a separate test dataset if available
-
-    wandb.finish()  # Finish wandb logging
 
 
 def parse_args():

@@ -2,11 +2,10 @@
 
 #SBATCH -t 1:00:00
 #SBATCH -N 1
-#SBATCH --tasks-per-node=4
 #SBATCH -p gpu
 #SBATCH --constraint=a100-80gb&sxm4
-#SBATCH --gpus-per-node=4
-#SBATCH --gpus-per-task=1
+#SBATCH --gres=gpu:4
+#SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=16
 
 # --constraint=a100-80gb&sxm4
