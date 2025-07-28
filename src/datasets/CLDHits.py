@@ -36,6 +36,22 @@ def get_hit_labels(hit_idx, gen_idx, weights):
     return hit_labels
 
 
+def standardize_calo_hit_features(calo_hit_features):
+    calo_hit_features[..., 0] = calo_hit_features[..., 0] / 1e4  # position x
+    calo_hit_features[..., 1] = calo_hit_features[..., 1] / 1e4  # position y
+    calo_hit_features[..., 2] = calo_hit_features[..., 2] / 1e4  # position z
+    calo_hit_features[..., 3] = np.log(calo_hit_features[..., 3] * 1e2) / 10  # energy
+    return calo_hit_features
+
+
+def inverse_standardize_calo_hit_features(calo_hit_features):
+    calo_hit_features[..., 0] = calo_hit_features[..., 0] * 1e4  # position x
+    calo_hit_features[..., 1] = calo_hit_features[..., 1] * 1e4  # position y
+    calo_hit_features[..., 2] = calo_hit_features[..., 2] * 1e4  # position z
+    calo_hit_features[..., 3] = np.exp(calo_hit_features[..., 3] * 10) / 1e2  # energy
+    return calo_hit_features
+
+
 class CLDHits(IterableDataset):
     def __init__(self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8):
         """
@@ -110,12 +126,14 @@ class CLDHits(IterableDataset):
 
                 calo_hit_features = np.column_stack(
                     (
-                        calo_hit_features["position.x"].to_numpy() / 1000,
-                        calo_hit_features["position.y"].to_numpy() / 1000,
-                        calo_hit_features["position.z"].to_numpy() / 1000,
-                        calo_hit_features["energy"].to_numpy() * 100,
+                        calo_hit_features["position.x"].to_numpy(),
+                        calo_hit_features["position.y"].to_numpy(),
+                        calo_hit_features["position.z"].to_numpy(),
+                        calo_hit_features["energy"].to_numpy(),
                     )
                 )
+
+                calo_hit_features = standardize_calo_hit_features(calo_hit_features)
 
                 hit_labels = get_hit_labels(
                     hit_idx, gen_idx, weights
