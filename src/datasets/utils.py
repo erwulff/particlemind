@@ -1,5 +1,5 @@
+import numpy as np
 import torch
-
 
 # adapted from from: https://github.com/jpata/particleflow/blob/a3a08fe1e687987c661faad00fd5526e733be014/mlpf/model/PFDataset.py#L163
 class Collater:
@@ -15,10 +15,11 @@ class Collater:
         dict: A dictionary containing padded and stacked inputs.
     """
 
-    def __init__(self, variable_size_keys="all", fixed_size_keys=None, **kwargs):
+    def __init__(self, variable_size_keys="all", fixed_size_keys=None, pad=-1, **kwargs):
         super(Collater, self).__init__(**kwargs)
         self.variable_size_keys = variable_size_keys
         self.fixed_size_keys = fixed_size_keys
+        self.pad = pad
 
     def __call__(self, inputs):
         ret = {}
@@ -28,6 +29,8 @@ class Collater:
                 ret[key] = torch.nn.utils.rnn.pad_sequence(
                     [torch.tensor(inp[key]).to(torch.float32) for inp in inputs], batch_first=True
                 )
+
+
             return ret
 
         # per-particle quantities need to be padded across events of different size
