@@ -90,6 +90,8 @@ def main(args):
     trainer.fit(model, train_loader, val_loader)
    
 
+    trainer.test(model, val_loader)
+
 if __name__ == "__main__":
     parser = ArgumentParser()
 
@@ -114,13 +116,13 @@ if __name__ == "__main__":
     
     # MODEL args
     parser.add_argument("--hidden_dim", type=int, default=128)
-    parser.add_argument("--latent_dim", type=int, default=16)
+    parser.add_argument("--latent_dim", type=int, default=4)
     parser.add_argument("--num_blocks", type=int, default=3)
     parser.add_argument("--num_heads", type=int, default=8)
     parser.add_argument("--alpha", type=int, default=5)
     parser.add_argument("--num_codes", type=int, default=512)
     parser.add_argument("--beta", type=float, default=0.9)
-    parser.add_argument("--kmeans_init", type=bool, default=False)
+    parser.add_argument("--kmeans_init", type=bool, default=True)
     parser.add_argument("--affine_lr", type=float, default=0.0)
     parser.add_argument("--sync_nu", type=int, default=2)
     parser.add_argument("--replace_freq", type=int, default=20)

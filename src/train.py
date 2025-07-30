@@ -108,8 +108,8 @@ def train(
     # Data loaders
     train_dataset = CLDHits(data_dir, "train")
     val_dataset = CLDHits(data_dir, "val")
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=Collater("all"))
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, collate_fn=Collater("all"))
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=Collater("all"), num_workers=8)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, collate_fn=Collater("all"), num_workers=8)
 
     model = SelfAttentionTransformer(
         input_size=input_size,
@@ -140,11 +140,15 @@ def train(
         logger=wandb_logger,
     )
 
-    # Train the model
-    trainer.fit(model, train_loader, val_loader)
+    logging.info("Trainer initialized with the following configuration: %s", trainer.__dict__)
 
-    # Test the model
+    logging.info("Starting training... Global rank: %s", trainer.global_rank)
+    trainer.fit(model, train_loader, val_loader)
+    logging.info("Training complete. Global rank: %s", trainer.global_rank)
+
+    logging.info("Testing the model... Global rank: %s", trainer.global_rank)
     trainer.test(model, val_loader)  # TODO: Use a separate test dataset if available
+    logging.info("Testing complete. Global rank: %s", trainer.global_rank)
 
 
 def parse_args():

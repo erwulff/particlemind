@@ -36,8 +36,24 @@ def get_hit_labels(hit_idx, gen_idx, weights):
     return hit_labels
 
 
+def standardize_calo_hit_features(calo_hit_features):
+    calo_hit_features[..., 0] = calo_hit_features[..., 0] / 1e4  # position x
+    calo_hit_features[..., 1] = calo_hit_features[..., 1] / 1e4  # position y
+    calo_hit_features[..., 2] = calo_hit_features[..., 2] / 1e4  # position z
+    calo_hit_features[..., 3] = np.log(calo_hit_features[..., 3] * 1e2) / 10  # energy
+    return calo_hit_features
+
+
+def inverse_standardize_calo_hit_features(calo_hit_features):
+    calo_hit_features[..., 0] = calo_hit_features[..., 0] * 1e4  # position x
+    calo_hit_features[..., 1] = calo_hit_features[..., 1] * 1e4  # position y
+    calo_hit_features[..., 2] = calo_hit_features[..., 2] * 1e4  # position z
+    calo_hit_features[..., 3] = np.exp(calo_hit_features[..., 3] * 10) / 1e2  # energy
+    return calo_hit_features
+
+
 class CLDHits(IterableDataset):
-    def __init__(self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8, nfiles=-1):
+    def __init__(self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8, nfiles=-1, by_event=True):
         """
         Initialize the dataset by storing the paths to all parquet files in the specified folder.
 
@@ -52,6 +68,7 @@ class CLDHits(IterableDataset):
         if self.nsamples is not None:
             self.sample_counter = 0
         self.nfiles = nfiles
+        self.by_event = by_event
 
         self.split = split
         if self.split is not None:
@@ -111,35 +128,48 @@ class CLDHits(IterableDataset):
 
                 calo_hit_features = np.column_stack(
                     (
-                        calo_hit_features["position.x"].to_numpy() / 1e4,
-                        calo_hit_features["position.y"].to_numpy() / 1e4,
-                        calo_hit_features["position.z"].to_numpy() / 1e4,
-                        np.log(calo_hit_features["energy"].to_numpy()  * 1e2) / 1e1,
+                        calo_hit_features["position.x"].to_numpy(),
+                        calo_hit_features["position.y"].to_numpy(),
+                        calo_hit_features["position.z"].to_numpy(),
+                        calo_hit_features["energy"].to_numpy(),
                     )
                 )
 
+                calo_hit_features = np.column_stack(
+                    (
+                        calo_hit_features["position.x"].to_numpy(),
+                        calo_hit_features["position.y"].to_numpy(),
+                        calo_hit_features["position.z"].to_numpy(),
+                        calo_hit_features["energy"].to_numpy(),
+                    )
+                )
+
+                calo_hit_features = standardize_calo_hit_features(calo_hit_features)
 
                 hit_labels = get_hit_labels(
                     hit_idx, gen_idx, weights
                 )  # This could be moved to the pre-processing step if needed
 
-                # new code to return per particle, not per event
-                for i in range(len(calo_hit_features)):
-                    if self.nsamples is not None and self.sample_counter >= self.nsamples:
-                        return
-                    self.sample_counter += 1
-
+                if self.by_event:
                     yield {
-                            "hit_labels": hit_labels[i:i+1],  # Shape (1,) or (1, label_dim)
-                            "calo_hit_features": calo_hit_features[i:i+1],  # Shape (1, num_features)
-                        }
+                        # "gen_idx": gen_idx,
+                        # "hit_idx": hit_idx,
+                        # "weights": weights,
+                        "hit_labels": hit_labels,
+                        "calo_hit_features": calo_hit_features,
+                    }
 
-                """
-                yield {
-                    # "gen_idx": gen_idx,
-                    # "hit_idx": hit_idx,
-                    # "weights": weights,
-                    "hit_labels": hit_labels,
-                    "calo_hit_features": calo_hit_features,
-                }
-                """
+                else:
+
+                    # new code to return per particle, not per event
+                    for i in range(len(calo_hit_features)):
+                        if self.nsamples is not None and self.sample_counter >= self.nsamples:
+                            return
+                        self.sample_counter += 1
+
+                        yield {
+                                "hit_labels": hit_labels[i:i+1],  # Shape (1,) or (1, label_dim)
+                                "calo_hit_features": calo_hit_features[i:i+1],  # Shape (1, num_features)
+                            }
+
+        
