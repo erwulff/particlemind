@@ -49,8 +49,8 @@ def main(args):
     )
 
     ### DATA
-    train_dataset = CLDHits(args.data_dir, "train", nfiles=args.num_files)
-    val_dataset = CLDHits(args.data_dir, "val", nfiles=args.num_files)
+    train_dataset = CLDHits(args.data_dir, "train", nfiles=args.num_files, by_event=False)
+    val_dataset = CLDHits(args.data_dir, "val", nfiles=args.num_files, by_event=False)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
 
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_files", type=int, default=10)
 
     # TRAINER ARGS
-    parser.add_argument("--max_epochs", type=int, default=30)
+    parser.add_argument("--max_epochs", type=int, default=3)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-2)
     
