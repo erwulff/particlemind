@@ -144,8 +144,13 @@ class CLDHits(IterableDataset):
                     )
                 )
 
+                 # get mask
+                axis_sum = torch.sum(torch.abs(calo_hit_features), dim = 2)
+                calo_hit_mask = torch.where(axis_sum > 0, 1.0, 0.0)
+
                 calo_hit_features = standardize_calo_hit_features(calo_hit_features)
 
+    
                 hit_labels = get_hit_labels(
                     hit_idx, gen_idx, weights
                 )  # This could be moved to the pre-processing step if needed
@@ -157,6 +162,7 @@ class CLDHits(IterableDataset):
                         # "weights": weights,
                         "hit_labels": hit_labels,
                         "calo_hit_features": calo_hit_features,
+                        "calo_hit_mask": calo_hit_mask,
                     }
 
                 else:
@@ -170,6 +176,7 @@ class CLDHits(IterableDataset):
                         yield {
                                 "hit_labels": hit_labels[i:i+1],  # Shape (1,) or (1, label_dim)
                                 "calo_hit_features": calo_hit_features[i:i+1],  # Shape (1, num_features)
+                                "calo_hit_mask": calo_hit_mask[i:i+1],  # Shape (1, )
                             }
 
         
