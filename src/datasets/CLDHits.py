@@ -111,6 +111,7 @@ class CLDHits(IterableDataset):
             files_to_process = self.parquet_files[worker_id::num_workers]
             logger.info(f"Processing {len(files_to_process)} files out of {len(self.parquet_files)} total files.")
 
+
         for file in files_to_process:
             data = ak.from_parquet(file)
             for event_i in range(len(data["genparticle_to_calo_hit_matrix"])):

@@ -29,7 +29,7 @@ def main(args):
     lr_monitor = LearningRateMonitor(logging_interval='step')
     checkpoint_loss = ModelCheckpoint(dirpath = f"{args.save_dir}/{args.project}/best_models/", 
                                       filename=f"{args.name}_val_loss_"+"{epoch:02d}", 
-                                      monitor="val_loss_epoch", mode="min", verbose=1, 
+                                      monitor="val/total_loss", mode="min", verbose=1, 
                                       auto_insert_metric_name=True)
     callbacks = [checkpoint_loss, lr_monitor]
 
@@ -49,19 +49,25 @@ def main(args):
     )
 
     ### DATA
-    train_dataset = CLDHits(args.data_dir, "train", nfiles=args.num_files, by_event=False)
-    val_dataset = CLDHits(args.data_dir, "val", nfiles=args.num_files, by_event=False)
+    train_dataset = CLDHits(args.data_dir, "train", nfiles=args.num_files, by_event=args.by_event)
+    val_dataset = CLDHits(args.data_dir, "val", nfiles=args.num_files, by_event=args.by_event)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
 
-
+    len_train_loader = len(train_loader)
 
     ### MODEL
+
+
     model = VQVAELightning(
         optimizer_kwargs = {
             "lr": args.learning_rate, 
-                            "weight_decay": args.weight_decay
-                            },
+             "weight_decay": args.weight_decay
+             },
+        scheduler_kwargs = {
+            "linear_warmup": {"total_iters": len_train_loader*int(args.warmup_fraction*args.max_epochs)},
+            "cosine_annealing": {"T_max": len_train_loader*(args.max_epochs - int(args.warmup_fraction*args.max_epochs))}
+            },
         #scheduler = None,
         model_kwargs={
                     "input_dim": 4,
@@ -106,24 +112,26 @@ if __name__ == "__main__":
 
     # DATA ARGS
     parser.add_argument("--data_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles")
-    parser.add_argument("--batch_size", type=int, default=512)
-    parser.add_argument("--num_files", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--num_files", type=int, default=100)
+    parser.add_argument("--by_event", type=bool, default=False)
 
     # TRAINER ARGS
-    parser.add_argument("--max_epochs", type=int, default=3)
+    parser.add_argument("--max_epochs", type=int, default=30)
+    parser.add_argument("--warmup_fraction", type=float, default=0.2)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-2)
     
     # MODEL args
-    parser.add_argument("--hidden_dim", type=int, default=128)
+    parser.add_argument("--hidden_dim", type=int, default=3)
     parser.add_argument("--latent_dim", type=int, default=4)
-    parser.add_argument("--num_blocks", type=int, default=3)
-    parser.add_argument("--num_heads", type=int, default=8)
+    parser.add_argument("--num_blocks", type=int, default=1)
+    parser.add_argument("--num_heads", type=int, default=1)
     parser.add_argument("--alpha", type=int, default=5)
-    parser.add_argument("--num_codes", type=int, default=512)
+    parser.add_argument("--num_codes", type=int, default=8)
     parser.add_argument("--beta", type=float, default=0.9)
     parser.add_argument("--kmeans_init", type=bool, default=True)
-    parser.add_argument("--affine_lr", type=float, default=0.0)
+    parser.add_argument("--affine_lr", type=float, default=0)
     parser.add_argument("--sync_nu", type=int, default=2)
     parser.add_argument("--replace_freq", type=int, default=20)
 

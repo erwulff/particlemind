@@ -23,6 +23,9 @@ from src.utils.arrays import (
     np_to_ak,
 )
 
+from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
+
+
 vector.register_awkward()
 
 logger = logging.getLogger(__name__)
@@ -337,7 +340,7 @@ class VQVAELightning(L.LightningModule):
     def __init__(
         self,
         optimizer_kwargs = {},
-        #scheduler_kwargs = {},
+        scheduler_kwargs = None,
         model_kwargs={},
         model_type="Transformer",
         **kwargs,
@@ -363,6 +366,7 @@ class VQVAELightning(L.LightningModule):
         self.validation_output = {}
 
         self.optimizer_kwargs = optimizer_kwargs
+        self.scheduler_kwargs = scheduler_kwargs
 
         # loss function (not used atm, since we calc MSE manually)
         self.criterion = torch.nn.MSELoss()
@@ -375,17 +379,21 @@ class VQVAELightning(L.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.model.parameters(), **self.optimizer_kwargs)
-        """
-        if self.lr_scheduler:
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": self.lr_scheduler(optimizer),
-                    "interval": self.lr_scheduler_interval,
-                    "frequency": self.lr_scheduler_frequency,
-                },
+
+        if self.scheduler_kwargs is not None:
+            warmup = LinearLR(optimizer, **self.scheduler_kwargs["linear_warmup"])
+            cosine = CosineAnnealingLR(optimizer, **self.scheduler_kwargs["cosine_annealing"])
+            scheduler = SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[self.scheduler_kwargs["linear_warmup"]["total_iters"]])
+
+            lr_scheduler_config = {
+                "scheduler": scheduler,
+                "interval": "step",
+                "name": "learning_rate",
             }
-        """
+
+            return [optimizer], [lr_scheduler_config]
+
+
         return optimizer
         
     def forward(self, x_particle, mask_particle):
@@ -400,6 +408,8 @@ class VQVAELightning(L.LightningModule):
         mask_particle = batch["calo_hit_mask"]
         labels = batch["hit_labels"]
 
+        #print(x_particle.shape, mask_particle.shape)
+
         x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
 
         reco_loss = ((x_particle_reco - x_particle) ** 2).mean()
@@ -409,16 +419,18 @@ class VQVAELightning(L.LightningModule):
         loss = reco_loss + alpha * cmt_loss
 
         if return_x:
-            return loss, x_particle, x_particle_reco, mask_particle, labels, code_idx
+            return loss, reco_loss, cmt_loss, x_particle, x_particle_reco, mask_particle, labels, code_idx
 
-        return loss
+        return loss, reco_loss, cmt_loss
 
     def training_step(self, batch, batch_idx: int) -> torch.Tensor:
         """Perform a single training step on a batch of data from the training set."""
-        loss = self.model_step(batch)
+        loss, reco_loss, cmt_loss = self.model_step(batch)
 
         self.train_loss_history.append(float(loss))
-        self.log("train_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/total_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/reco_loss", reco_loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/cmt_loss", cmt_loss.item(), on_step=True, on_epoch=True, prog_bar=True)
 
         return loss
 
@@ -459,7 +471,7 @@ class VQVAELightning(L.LightningModule):
         self.val_code_idx = []
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
-        loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
+        loss, reco_loss, cmt_loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
 
         # save the original and reconstructed data
         self.val_x_original.append(x_original.detach().cpu().numpy())
@@ -468,7 +480,9 @@ class VQVAELightning(L.LightningModule):
         self.val_labels.append(labels.detach().cpu().numpy())
         self.val_code_idx.append(code_idx.detach().cpu().numpy())
 
-        self.log("val_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val/total_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val/reco_loss", reco_loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val/cmt_loss", cmt_loss.item(), on_step=True, on_epoch=True, prog_bar=True)
 
         # for the first validation step, plot the model
         if batch_idx == 0:
@@ -506,7 +520,7 @@ class VQVAELightning(L.LightningModule):
         self.test_code_idx = []
 
     def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
-        loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
+        loss, _, _, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
 
         # save the original and reconstructed data
         self.test_x_original.append(x_original.detach().cpu().numpy())
@@ -652,18 +666,24 @@ class VQVAELightning(L.LightningModule):
 
     def on_validation_epoch_end(self) -> None:
         """Lightning hook that is called when a validation epoch ends."""
+        pass
+        """
         self.val_x_original_concat = np.concatenate(self.val_x_original)
         self.val_x_reco_concat = np.concatenate(self.val_x_reco)
         self.val_mask_concat = np.concatenate(self.val_mask)
         self.val_labels_concat = np.concatenate(self.val_labels)
         self.val_code_idx_concat = np.concatenate(self.val_code_idx)
+        """
 
     def on_test_epoch_end(self):
+        pass
+        """
         self.test_x_original_concat = np.concatenate(self.test_x_original)
         self.test_x_reco_concat = np.concatenate(self.test_x_reco)
         self.test_mask_concat = np.concatenate(self.test_mask)
         self.test_labels_concat = np.concatenate(self.test_labels)
         self.test_code_idx_concat = np.concatenate(self.test_code_idx)
+        """
 
   
 
@@ -831,7 +851,6 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
     bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
     ax.hist(idx, bins=bins)
     ax.set_yscale("log")
-    print(idx)
     ax.set_title(
         "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that"
         " codebook entry)",
