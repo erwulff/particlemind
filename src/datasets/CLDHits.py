@@ -53,7 +53,9 @@ def inverse_standardize_calo_hit_features(calo_hit_features):
 
 
 class CLDHits(IterableDataset):
-    def __init__(self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8, nfiles=-1, by_event=True):
+    def __init__(
+        self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8, nfiles=-1, by_event=True
+    ):
         """
         Initialize the dataset by storing the paths to all parquet files in the specified folder.
 
@@ -101,7 +103,7 @@ class CLDHits(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
             # Single-process data loading
-            files_to_process = self.parquet_files[:self.nfiles]
+            files_to_process = self.parquet_files[: self.nfiles]
             logger.info(f"Processing {len(files_to_process)} files in single-process mode.")
 
         else:
@@ -157,8 +159,6 @@ class CLDHits(IterableDataset):
                         self.sample_counter += 1
 
                         yield {
-                                "hit_labels": hit_labels[i:i+1],  # Shape (1,) or (1, label_dim)
-                                "calo_hit_features": calo_hit_features[i:i+1],  # Shape (1, num_features)
-                            }
-
-        
+                            "hit_labels": hit_labels[i : i + 1],  # Shape (1,) or (1, label_dim)
+                            "calo_hit_features": calo_hit_features[i : i + 1],  # Shape (1, num_features)
+                        }

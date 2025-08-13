@@ -13,27 +13,31 @@ from src.datasets.CLDHits import CLDHits
 from src.datasets.utils import Collater
 from src.models.vqvae import VQVAELightning
 
+
 def main(args):
 
     seed_everything(0)
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
     os.environ["WANDB_CACHE_DIR"] = "/pscratch/sd/r/rmastand/"
 
-
     if args.logger == "wandb":
-        logger = WandbLogger(name=args.name, project=args.project, save_dir = f"{args.save_dir}/{args.project}/", log_model="all")
+        logger = WandbLogger(
+            name=args.name, project=args.project, save_dir=f"{args.save_dir}/{args.project}/", log_model="all"
+        )
         logger.experiment.config.update(args)
     elif args.logger == "tensorboard":
         logger = TensorBoardLogger(args.data_dir, name=args.name)
 
-    lr_monitor = LearningRateMonitor(logging_interval='step')
-    checkpoint_loss = ModelCheckpoint(dirpath = f"{args.save_dir}/{args.project}/best_models/", 
-                                      filename=f"{args.name}_val_loss_"+"{epoch:02d}", 
-                                      monitor="val_loss_epoch", mode="min", verbose=1, 
-                                      auto_insert_metric_name=True)
+    lr_monitor = LearningRateMonitor(logging_interval="step")
+    checkpoint_loss = ModelCheckpoint(
+        dirpath=f"{args.save_dir}/{args.project}/best_models/",
+        filename=f"{args.name}_val_loss_" + "{epoch:02d}",
+        monitor="val_loss_epoch",
+        mode="min",
+        verbose=1,
+        auto_insert_metric_name=True,
+    )
     callbacks = [checkpoint_loss, lr_monitor]
-
-
 
     trainer = Trainer(
         logger=logger,
@@ -43,9 +47,9 @@ def main(args):
         enable_model_summary=True,
         log_every_n_steps=1,
         max_epochs=args.max_epochs,
-        callbacks = callbacks,
+        callbacks=callbacks,
         precision=args.precision,
-        default_root_dir=f"{args.save_dir}/{args.project}/"
+        default_root_dir=f"{args.save_dir}/{args.project}/",
     )
 
     ### DATA
@@ -54,43 +58,36 @@ def main(args):
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
 
-
-
     ### MODEL
     model = VQVAELightning(
-        optimizer_kwargs = {
-            "lr": args.learning_rate, 
-                            "weight_decay": args.weight_decay
-                            },
-        #scheduler = None,
+        optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
+        # scheduler = None,
         model_kwargs={
-                    "input_dim": 4,
-                    "latent_dim": args.latent_dim,
-                    "hidden_dim": args.hidden_dim,
-                    "num_heads": args.num_heads,
-                    "num_blocks": args.num_blocks,
-                    "alpha": args.alpha,
-                    "vq_kwargs":{
-                                "num_codes": args.num_codes,
-                            "beta": args.beta,
-                            "kmeans_init": args.kmeans_init,
-                        #   "norm": "null",
-                        # "cb_norm": "null",
-                            "affine_lr": args.affine_lr,
-                            "sync_nu": args.sync_nu,
-                            "replace_freq": args.replace_freq,
-                            "dim": -1,
-                        }
-                   },
+            "input_dim": 4,
+            "latent_dim": args.latent_dim,
+            "hidden_dim": args.hidden_dim,
+            "num_heads": args.num_heads,
+            "num_blocks": args.num_blocks,
+            "alpha": args.alpha,
+            "vq_kwargs": {
+                "num_codes": args.num_codes,
+                "beta": args.beta,
+                "kmeans_init": args.kmeans_init,
+                #   "norm": "null",
+                # "cb_norm": "null",
+                "affine_lr": args.affine_lr,
+                "sync_nu": args.sync_nu,
+                "replace_freq": args.replace_freq,
+                "dim": -1,
+            },
+        },
         model_type="VQVAENormFormer",
-
-       
     )
 
     trainer.fit(model, train_loader, val_loader)
-   
 
     trainer.test(model, val_loader)
+
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -102,10 +99,12 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/")
     parser.add_argument("--name", type=str, default="test")
     parser.add_argument("--project", type=str, default="vqvae_training")
-    parser.add_argument( "--logger", type=str, default="wandb", choices=["tensorboard", "wandb"])
+    parser.add_argument("--logger", type=str, default="wandb", choices=["tensorboard", "wandb"])
 
     # DATA ARGS
-    parser.add_argument("--data_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles")
+    parser.add_argument(
+        "--data_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles"
+    )
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--num_files", type=int, default=10)
 
@@ -113,7 +112,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_epochs", type=int, default=3)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-2)
-    
+
     # MODEL args
     parser.add_argument("--hidden_dim", type=int, default=128)
     parser.add_argument("--latent_dim", type=int, default=4)
@@ -126,9 +125,6 @@ if __name__ == "__main__":
     parser.add_argument("--affine_lr", type=float, default=0.0)
     parser.add_argument("--sync_nu", type=int, default=2)
     parser.add_argument("--replace_freq", type=int, default=20)
-
-
-
 
     args = parser.parse_args()
     main(args)

@@ -33,9 +33,9 @@ def p4s_from_ptetaphimass(
             "pt": ak_arr[field_name_pt],
             "eta": ak_arr[field_name_eta],
             "phi": ak_arr[field_name_phi],
-            "mass": ak_arr[field_name_mass]
-            if field_name_mass in ak_arr.fields
-            else ak.zeros_like(ak_arr[field_name_pt]),
+            "mass": (
+                ak_arr[field_name_mass] if field_name_mass in ak_arr.fields else ak.zeros_like(ak_arr[field_name_pt])
+            ),
         },
         with_name="Momentum4D",
     )
@@ -262,9 +262,7 @@ def ak_select_and_preprocess(ak_array: ak.Array, pp_dict=None, inverse=False):
                 start, stop, n_bins = pp_dict[name]["binning"]
                 if pp_dict[name].get("bin_edges") is None:
                     pp_dict[name]["bin_edges"] = np.linspace(start, stop, int(n_bins))
-                print(
-                    f"Applying binning to field {name} with np.linspace({start}, {stop}, {n_bins})"
-                )
+                print(f"Applying binning to field {name} with np.linspace({start}, {stop}, {n_bins})")
             if "clip_min" not in params:
                 pp_dict[name]["clip_min"] = None
             if "clip_max" not in params:
@@ -288,14 +286,10 @@ def ak_select_and_preprocess(ak_array: ak.Array, pp_dict=None, inverse=False):
 
             if pp_dict[name]["func"] is not None:
                 if pp_dict[name]["inv_func"] is None:
-                    raise ValueError(
-                        "If a function is specified, an inverse function must also be specified."
-                    )
+                    raise ValueError("If a function is specified, an inverse function must also be specified.")
             else:
                 if pp_dict[name]["inv_func"] is not None:
-                    raise ValueError(
-                        "If an inverse function is specified, a function must also be specified."
-                    )
+                    raise ValueError("If an inverse function is specified, a function must also be specified.")
         # apply selection cuts
         if pp_dict[name].get("larger_than") is not None:
             selection_mask = selection_mask & (ak_array[name] > pp_dict[name]["larger_than"])
@@ -321,15 +315,11 @@ def ak_select_and_preprocess(ak_array: ak.Array, pp_dict=None, inverse=False):
                 ak_clip(
                     (
                         apply_binning(
-                            eval(params["func"])(  # nosec
-                                getattr(ak_array, name)
-                            ),
+                            eval(params["func"])(getattr(ak_array, name)),  # nosec
                             params["bin_edges"],
                         )[selection_mask]
                         if params["func"]
-                        else apply_binning(getattr(ak_array, name), params["bin_edges"])[
-                            selection_mask
-                        ]
+                        else apply_binning(getattr(ak_array, name), params["bin_edges"])[selection_mask]
                     ),
                     params["clip_min"],
                     params["clip_max"],
@@ -358,9 +348,7 @@ def sort_by_pt(constituents: ak.Array, ascending: bool = False):
         try:
             temppt = constituents.pt
         except AttributeError:
-            raise AttributeError(
-                "Trying to sort an ak.Array without a pt attribute. Please check the input."
-            )
+            raise AttributeError("Trying to sort an ak.Array without a pt attribute. Please check the input.")
     indices = ak.argsort(temppt, axis=1, ascending=ascending)
     return constituents[indices]
 
@@ -415,9 +403,7 @@ def ak_clip(arr, clip_min=None, clip_max=None):
 
     if ndim > 1:
         # Convert it back to awkward form
-        return ak.Array(
-            ak.contents.ListOffsetArray(arr.layout.offsets, ak.Array(numpy_arr).layout)
-        )
+        return ak.Array(ak.contents.ListOffsetArray(arr.layout.offsets, ak.Array(numpy_arr).layout))
     return numpy_arr
 
 
@@ -547,9 +533,7 @@ def count_appearances(arr, mask, count_up_to: int = 10):
 
     # calculate the percentages of tokens that appear 0, 1, 2, 3, ... times
     n_tokens_total = np.sum(mask, axis=1)
-    frac_token_appearances = np.array(
-        [n * i / n_tokens_total for i, n in enumerate(n_token_appearances)]
-    )
+    frac_token_appearances = np.array([n * i / n_tokens_total for i, n in enumerate(n_token_appearances)])
 
     return counts, np.array(n_token_appearances).T, frac_token_appearances.T
 
@@ -573,17 +557,16 @@ def calc_additional_kinematic_features(ak_particles):
     required_fields = ["part_pt", "part_etarel", "part_phirel"]
     if not all([feat in ak_particles.fields for feat in required_fields]):
         raise ValueError(
-            "Not all required features are present in the input array."
-            f"Required features are: {required_fields}"
+            "Not all required features are present in the input array." f"Required features are: {required_fields}"
         )
     p4s = ak.zip(
         {
             "pt": ak_particles.part_pt,
             "eta": ak_particles.part_etarel,
             "phi": ak_particles.part_phirel,
-            "mass": ak_particles.part_mass
-            if "part_mass" in ak_particles.fields
-            else ak.zeros_like(ak_particles.part_pt),
+            "mass": (
+                ak_particles.part_mass if "part_mass" in ak_particles.fields else ak.zeros_like(ak_particles.part_pt)
+            ),
         },
         with_name="Momentum4D",
     )
@@ -684,9 +667,7 @@ def convert_torch_token_sequence_with_stop_token_to_ak(tensor, stop_value):
     stop_indices = (tensor_np[:, :, 0] == stop_value).argmax(axis=1)
     # Correct indices where the stop value might not be present (argmax returns 0 in such cases)
     no_stop_value = ~(tensor_np[:, :, 0] == stop_value).any(axis=1)
-    stop_indices[no_stop_value] = tensor_np.shape[
-        1
-    ]  # Use the sequence length for sequences without the stop value
+    stop_indices[no_stop_value] = tensor_np.shape[1]  # Use the sequence length for sequences without the stop value
 
     # build the mask
     for idx, sequence in enumerate(tensor_np):

@@ -177,10 +177,7 @@ class Transformer(torch.nn.Module):
         self.output_dim = output_dim
 
         self.blocks = nn.ModuleList(
-            [
-                NormformerBlock(input_dim=hidden_dim, mlp_dim=hidden_dim, num_heads=num_heads)
-                for _ in range(num_blocks)
-            ]
+            [NormformerBlock(input_dim=hidden_dim, mlp_dim=hidden_dim, num_heads=num_heads) for _ in range(num_blocks)]
         )
         self.project_out = nn.Linear(hidden_dim, output_dim)
 
@@ -336,8 +333,8 @@ class VQVAELightning(L.LightningModule):
 
     def __init__(
         self,
-        optimizer_kwargs = {},
-        #scheduler_kwargs = {},
+        optimizer_kwargs={},
+        # scheduler_kwargs = {},
         model_kwargs={},
         model_type="Transformer",
         **kwargs,
@@ -373,8 +370,7 @@ class VQVAELightning(L.LightningModule):
         self.val_mask = []
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            self.model.parameters(), **self.optimizer_kwargs)
+        optimizer = torch.optim.AdamW(self.model.parameters(), **self.optimizer_kwargs)
         """
         if self.lr_scheduler:
             return {
@@ -387,7 +383,7 @@ class VQVAELightning(L.LightningModule):
             }
         """
         return optimizer
-        
+
     def forward(self, x_particle, mask_particle):
         x_particle_reco, vq_out = self.model(x_particle, mask=mask_particle)
         return x_particle_reco, vq_out
@@ -428,15 +424,14 @@ class VQVAELightning(L.LightningModule):
             self.trainer.datamodule.hparams.dataset_kwargs_common.feature_dict
         )
     """
+
     def on_train_epoch_start(self):
         logger.info(f"Epoch {self.trainer.current_epoch} starting.")
         self.epoch_train_start_time = time.time()  # start timing the epoch
 
     def on_train_epoch_end(self):
         self.epoch_train_end_time = time.time()
-        self.epoch_train_duration_minutes = (
-            self.epoch_train_end_time - self.epoch_train_start_time
-        ) / 60
+        self.epoch_train_duration_minutes = (self.epoch_train_end_time - self.epoch_train_start_time) / 60
         self.log(
             "epoch_train_duration_minutes",
             self.epoch_train_duration_minutes,
@@ -444,8 +439,7 @@ class VQVAELightning(L.LightningModule):
             prog_bar=False,
         )
         logger.info(
-            f"Epoch {self.trainer.current_epoch} finished in"
-            f" {self.epoch_train_duration_minutes:.1f} minutes."
+            f"Epoch {self.trainer.current_epoch} finished in" f" {self.epoch_train_duration_minutes:.1f} minutes."
         )
 
     def on_train_end(self):
@@ -492,9 +486,7 @@ class VQVAELightning(L.LightningModule):
                 saveas=plot_filename,
             )
             if comet_logger is not None:
-                comet_logger.log_image(
-                    plot_filename, name=plot_filename.split("/")[-1], step=curr_step
-                )
+                comet_logger.log_image(plot_filename, name=plot_filename.split("/")[-1], step=curr_step)
 
         return loss
 
@@ -569,9 +561,7 @@ class VQVAELightning(L.LightningModule):
         tokens = np_to_ak(codes, names=["token"], mask=mask)["token"]
         return tokens
 
-    def reconstruct_ak_tokens(
-        self, tokens_ak, pp_dict, batch_size=256, pad_length=128, hide_pbar=False
-    ):
+    def reconstruct_ak_tokens(self, tokens_ak, pp_dict, batch_size=256, pad_length=128, hide_pbar=False):
         """Reconstruct tokenized awkward array.
 
         Parameters
@@ -635,9 +625,7 @@ class VQVAELightning(L.LightningModule):
                 if hasattr(self.model, "latent_projection_out"):
                     x_reco_batch = self.model.latent_projection_out(z_q) * mask_batch.unsqueeze(-1)
                     x_reco_batch = self.model.decoder_normformer(x_reco_batch, mask=mask_batch)
-                    x_reco_batch = self.model.output_projection(
-                        x_reco_batch
-                    ) * mask_batch.unsqueeze(-1)
+                    x_reco_batch = self.model.output_projection(x_reco_batch) * mask_batch.unsqueeze(-1)
                 elif hasattr(self.model, "decoder"):
                     x_reco_batch = self.model.decoder(z_q)
                 else:
@@ -664,8 +652,6 @@ class VQVAELightning(L.LightningModule):
         self.test_mask_concat = np.concatenate(self.test_mask)
         self.test_labels_concat = np.concatenate(self.test_labels)
         self.test_code_idx_concat = np.concatenate(self.test_code_idx)
-
-  
 
 
 def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None, saveas=None):
@@ -833,22 +819,13 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
     ax.set_yscale("log")
     print(idx)
     ax.set_title(
-        "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that"
-        " codebook entry)",
+        "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that" " codebook entry)",
         fontsize=8,
     )
 
     # make empty axes invisible
     def is_axes_empty(ax):
-        return not (
-            ax.lines
-            or ax.patches
-            or ax.collections
-            or ax.images
-            or ax.texts
-            or ax.artists
-            or ax.tables
-        )
+        return not (ax.lines or ax.patches or ax.collections or ax.images or ax.texts or ax.artists or ax.tables)
 
     for ax in axarr.flatten():
         if is_axes_empty(ax):
