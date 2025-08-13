@@ -16,3 +16,11 @@ repos:
     hooks:
     - id: nbdev_clean
       args: [--fname=notebooks, --clear_all]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+    - id: check-json
+    - id: check-yaml
+    - id: trailing-whitespace
+    - id: end-of-file-fixer
