@@ -23,3 +23,6 @@ torchaudio==2.5.1
 nbdev
 lightning
 tensorboardX
+hydra-core
+hydra-colorlog
+omegaconf
