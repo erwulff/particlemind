@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn.attention import SDPBackend, sdpa_kernel
+import lightning.pytorch as pl
 
 
 def get_activation(activation):
@@ -216,3 +217,50 @@ class SelfAttentionTransformer(nn.Module):
         x = self.norm(final_embedding)
         x = self.fc_out(x)
         return x
+
+
+class SelfAttentionTransformerLightning(pl.LightningModule):
+    def __init__(self, loss_function, lr, model_kwargs=None):
+        super(SelfAttentionTransformerLightning, self).__init__()
+        self.model = SelfAttentionTransformer(**model_kwargs)
+        self.learning_rate = lr
+        self.loss_function = loss_function
+
+    def forward(self, x, mask=None):
+        return self.model(x, mask)
+
+    def training_step(self, batch, batch_idx):
+        x = batch["calo_hit_features"]
+        y = batch["hit_labels"]
+
+        y_pred = self(x)
+        loss = self.loss_function(y_pred, y)
+
+        # Logging
+        self.log("train_loss", loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x = batch["calo_hit_features"]
+        y = batch["hit_labels"]
+
+        y_pred = self(x)
+        loss = self.loss_function(y_pred, y)
+
+        # Logging
+        self.log("val_loss", loss)
+
+    def test_step(self, batch, batch_idx):
+        x = batch["calo_hit_features"]
+        y = batch["hit_labels"]
+
+        y_pred = self(x)
+        loss = self.loss_function(y_pred, y)
+
+        # Logging
+        self.log("test_loss", loss)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        return [optimizer]  # , [scheduler]

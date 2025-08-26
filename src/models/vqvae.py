@@ -3,7 +3,7 @@
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Tuple
 
 import lightning as L
 import matplotlib.pyplot as plt
@@ -14,7 +14,12 @@ import torch.nn.functional as F
 import vector
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
-from vqtorch.nn import VectorQuant
+
+# vqtorch can be installed from https://github.com/minyoungg/vqtorch
+try:
+    from vqtorch.nn import VectorQuant  # type: ignore
+except ImportError as e:
+    raise ImportError("vqtorch is not installed. Please install it to use this module.") from e
 
 from src.utils.arrays import (
     ak_pad,
@@ -342,8 +347,6 @@ class VQVAELightning(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(logger=False)
 
-        # --------------- load pretrained model --------------- #
-        # if kwargs.get("load_pretrained", False):
         if model_type == "MLP":
             self.model = VQVAEMLP(**model_kwargs)
         elif model_type == "Transformer":
@@ -371,7 +374,6 @@ class VQVAELightning(L.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.model.parameters(), **self.optimizer_kwargs)
-        """
         if self.lr_scheduler:
             return {
                 "optimizer": optimizer,
@@ -381,7 +383,6 @@ class VQVAELightning(L.LightningModule):
                     "frequency": self.lr_scheduler_frequency,
                 },
             }
-        """
         return optimizer
 
     def forward(self, x_particle, mask_particle):
