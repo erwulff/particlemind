@@ -3,7 +3,10 @@ import numpy as np
 import torch
 import vector
 
+from src.utils.pylogger import get_pylogger
+
 vector.register_awkward()
+logger = pylogger = get_pylogger(__name__)
 
 
 def p4s_from_ptetaphimass(
@@ -578,7 +581,7 @@ def calc_additional_kinematic_features(ak_particles):
             "part_pz": p4s.pz,
             "part_ptrel": ak_particles.part_pt / p4s_jet.pt,
             "part_energy": p4s.energy,
-            "part_energy_raw": p4s.energy,  # this is a workaround to be able to use the energy twice (once for lorentz vectors, once as particle feature)
+            "part_energy_raw": p4s.energy,  # this is a workaround to use the energy twice (once for lorentz vectors, once as particle feature)
             "part_erel": p4s.energy / p4s_jet.energy,
             "part_deltaR": p4s.deltaR(p4s_jet),
         }

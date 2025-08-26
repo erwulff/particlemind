@@ -1,7 +1,6 @@
 import os
 from argparse import ArgumentParser
 
-import torch
 from torch.utils.data import DataLoader
 
 from lightning import Trainer, seed_everything
@@ -52,13 +51,13 @@ def main(args):
         default_root_dir=f"{args.save_dir}/{args.project}/",
     )
 
-    ### DATA
+    # DATA
     train_dataset = CLDHits(args.data_dir, "train", nfiles=args.num_files, by_event=False)
     val_dataset = CLDHits(args.data_dir, "val", nfiles=args.num_files, by_event=False)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
 
-    ### MODEL
+    # MODEL
     model = VQVAELightning(
         optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
         # scheduler = None,
