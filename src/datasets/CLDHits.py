@@ -152,7 +152,7 @@ class CLDHits(IterableDataset):
 
                 else:
 
-                    # new code to return per particle, not per event
+                    # return one hit at a time instead of one event
                     for i in range(len(calo_hit_features)):
                         if self.nsamples is not None and self.sample_counter >= self.nsamples:
                             return
