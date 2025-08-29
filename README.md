@@ -1,6 +1,13 @@
 # particlemind
 Self-supervised learning on HEP events.
 
+## Datasets
+
+A small testing dataset (about 20GB) can be downloaded from zenodo:
+```
+./scripts/download_data.sh
+```
+
 ### Approximate repo structure
 ```
 ├── README.md
