@@ -1,0 +1,16 @@
+# _target_: lightning.Trainer
+
+defaults:
+  - default
+
+accelerator: gpu
+strategy: ddp
+devices: 4
+
+# mixed precision
+precision: 16-mixed
+
+# set True to to ensure deterministic results
+# makes training slower but gives more reproducibility than just setting seeds
+deterministic: False
+sync_batchnorm: True

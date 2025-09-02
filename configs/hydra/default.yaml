@@ -1,0 +1,17 @@
+# https://hydra.cc/docs/configure_hydra/intro/
+
+# enable color logging by setting to 'colorlog' -- if set to 'none', logging will not
+# be modified by hydra (i.e. then the logging config from the code will be used)
+defaults:
+  - override hydra_logging: none
+  - override job_logging: none
+
+
+# output directory, generated dynamically on each run
+run:
+  dir: ./outputs/${project_name}/runs/${now:%Y-%m-%d}_${now:%H-%M-%S}_${task_name}_${run_name}
+
+# if you want to disable automatic output directory creation, set run.dir to "."
+# run:
+#   dir: .
+# output_subdir: null  # if set, will be appended to run.dir. Default is .hydra

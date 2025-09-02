@@ -1,0 +1,12 @@
+defaults:
+  - _self_
+  - hydra: default
+  - model: vqvae
+  - data: cldhits
+  - trainer: ddp
+  - ml_logger:  wandb # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+  - paths: default
+
+project_name: dev
+run_name: main
+task_name: train
