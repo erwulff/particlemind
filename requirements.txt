@@ -8,6 +8,7 @@ ipykernel
 jupyterlab
 kaleido
 lightning
+lmdb
 matplotlib
 nbdev
 nbformat
