@@ -2,28 +2,35 @@ import os
 from argparse import ArgumentParser
 
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+
 
 from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger, TensorBoardLogger
-
+from lightning.fabric.utilities.rank_zero import rank_zero_only
 
 from src.datasets.CLDHits import CLDHits
 from src.datasets.utils import Collater
 from src.models.vqvae import VQVAELightning
 
+@rank_zero_only
+def log_config(logger, args):
+    if hasattr(logger, "experiment") and hasattr(logger.experiment, "config"):
+        logger.experiment.config.update(vars(args))
+
 
 def main(args):
 
     seed_everything(0)
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
+    #os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     os.environ["WANDB_CACHE_DIR"] = "/pscratch/sd/r/rmastand/"
 
     if args.logger == "wandb":
         logger = WandbLogger(
             name=args.name, project=args.project, save_dir=f"{args.save_dir}/{args.project}/", log_model="all"
         )
-        logger.experiment.config.update(args)
+        log_config(logger, args)
     elif args.logger == "tensorboard":
         logger = TensorBoardLogger(args.data_dir, name=args.name)
 
@@ -42,6 +49,7 @@ def main(args):
         logger=logger,
         devices="auto",
         accelerator="cuda",
+        strategy="ddp",
         deterministic=True,
         enable_model_summary=True,
         log_every_n_steps=1,
@@ -49,13 +57,17 @@ def main(args):
         callbacks=callbacks,
         precision=args.precision,
         default_root_dir=f"{args.save_dir}/{args.project}/",
+        limit_train_batches=1000,
+        limit_val_batches=10
     )
 
     # DATA
-    train_dataset = CLDHits(args.data_dir, "train", nfiles=args.num_files, by_event=False)
-    val_dataset = CLDHits(args.data_dir, "val", nfiles=args.num_files, by_event=False)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=Collater("all"))
+    train_dataset = CLDHits(args.data_dir, "train", nfiles=args.num_files, by_event=True, shuffle_files=True)
+    val_dataset = CLDHits(args.data_dir, "val", nfiles=args.num_files, by_event=True, shuffle_files=False)
+
+
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=Collater("all"), num_workers=2)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=Collater("all"), num_workers=2)
 
     # MODEL
     model = VQVAELightning(
@@ -104,7 +116,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles"
     )
-    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--num_files", type=int, default=10)
 
     # TRAINER ARGS
@@ -115,8 +127,8 @@ if __name__ == "__main__":
     # MODEL args
     parser.add_argument("--hidden_dim", type=int, default=128)
     parser.add_argument("--latent_dim", type=int, default=4)
-    parser.add_argument("--num_blocks", type=int, default=3)
-    parser.add_argument("--num_heads", type=int, default=8)
+    parser.add_argument("--num_blocks", type=int, default=2)
+    parser.add_argument("--num_heads", type=int, default=4)
     parser.add_argument("--alpha", type=int, default=5)
     parser.add_argument("--num_codes", type=int, default=512)
     parser.add_argument("--beta", type=float, default=0.9)

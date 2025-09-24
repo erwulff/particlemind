@@ -83,13 +83,15 @@ class CLDHits(IterableDataset):
         if self.shuffle_files:
             self.shuffle_shards()
 
+    """
     def __len__(self):
-        """
-        Return the number of events in the dataset.
-        """
+       
+        #Return the number of events in the dataset.
+        
         data = ak.from_parquet(self.parquet_files[0])
         events_per_file = len(data[data.fields[0]])
         return len(self.parquet_files) * events_per_file if self.nsamples is None else self.nsamples
+    """
 
     def shuffle_shards(self):
         """

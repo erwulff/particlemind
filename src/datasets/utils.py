@@ -33,6 +33,7 @@ class Collater:
             # get mask
             axis_sum = torch.sum(torch.abs(ret["calo_hit_features"]), dim=2)
             ret["calo_hit_mask"] = torch.where(axis_sum > 0, 1.0, 0.0)
+    
 
             return ret
 

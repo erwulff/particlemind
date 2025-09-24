@@ -13,6 +13,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import vector
 from torch.utils.data import DataLoader, TensorDataset
+import torch.distributed as dist
+
 from tqdm import tqdm
 
 # vqtorch can be installed from https://github.com/minyoungg/vqtorch
@@ -363,6 +365,7 @@ class VQVAELightning(L.LightningModule):
         self.validation_output = {}
 
         self.optimizer_kwargs = optimizer_kwargs
+        self.lr_scheduler = None # TODO
 
         # loss function (not used atm, since we calc MSE manually)
         self.criterion = torch.nn.MSELoss()
@@ -397,6 +400,7 @@ class VQVAELightning(L.LightningModule):
         mask_particle = batch["calo_hit_mask"]
         labels = batch["hit_labels"]
 
+
         x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
 
         reco_loss = ((x_particle_reco - x_particle) ** 2).mean()
@@ -415,7 +419,7 @@ class VQVAELightning(L.LightningModule):
         loss = self.model_step(batch)
 
         self.train_loss_history.append(float(loss))
-        self.log("train_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
 
         return loss
 
@@ -438,6 +442,7 @@ class VQVAELightning(L.LightningModule):
             self.epoch_train_duration_minutes,
             on_epoch=True,
             prog_bar=False,
+            sync_dist=True
         )
         logger.info(
             f"Epoch {self.trainer.current_epoch} finished in" f" {self.epoch_train_duration_minutes:.1f} minutes."
@@ -447,6 +452,7 @@ class VQVAELightning(L.LightningModule):
         pass
 
     def on_validation_epoch_start(self) -> None:
+
         self.val_x_original = []
         self.val_x_reco = []
         self.val_mask = []
@@ -463,7 +469,7 @@ class VQVAELightning(L.LightningModule):
         self.val_labels.append(labels.detach().cpu().numpy())
         self.val_code_idx.append(code_idx.detach().cpu().numpy())
 
-        self.log("val_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
         # for the first validation step, plot the model
         if batch_idx == 0:
@@ -508,7 +514,7 @@ class VQVAELightning(L.LightningModule):
         self.test_labels.append(labels.detach().cpu().numpy())
         self.test_code_idx.append(code_idx.detach().cpu().numpy())
 
-        self.log("test_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("test_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
     def tokenize_ak_array(self, ak_arr, pp_dict, batch_size=256, pad_length=128, hide_pbar=False):
         """Tokenize an awkward array of jets.
@@ -639,20 +645,25 @@ class VQVAELightning(L.LightningModule):
 
         return x_reco_ak
 
+    """
     def on_validation_epoch_end(self) -> None:
-        """Lightning hook that is called when a validation epoch ends."""
+        # Lightning hook that is called when a validation epoch ends.
+
         self.val_x_original_concat = np.concatenate(self.val_x_original)
         self.val_x_reco_concat = np.concatenate(self.val_x_reco)
         self.val_mask_concat = np.concatenate(self.val_mask)
         self.val_labels_concat = np.concatenate(self.val_labels)
         self.val_code_idx_concat = np.concatenate(self.val_code_idx)
+    """
 
+    """
     def on_test_epoch_end(self):
         self.test_x_original_concat = np.concatenate(self.test_x_original)
         self.test_x_reco_concat = np.concatenate(self.test_x_reco)
         self.test_mask_concat = np.concatenate(self.test_mask)
         self.test_labels_concat = np.concatenate(self.test_labels)
         self.test_code_idx_concat = np.concatenate(self.test_code_idx)
+    """
 
 
 def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None, saveas=None):
@@ -818,7 +829,6 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
     bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
     ax.hist(idx, bins=bins)
     ax.set_yscale("log")
-    print(idx)
     ax.set_title(
         "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that" " codebook entry)",
         fontsize=8,
