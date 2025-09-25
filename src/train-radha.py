@@ -1,6 +1,8 @@
 import os
 from argparse import ArgumentParser
 
+import torch
+torch.cuda.empty_cache()
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
@@ -12,7 +14,7 @@ from lightning.fabric.utilities.rank_zero import rank_zero_only
 
 from src.datasets.CLDHits import CLDHits
 from src.datasets.utils import Collater
-from src.models.vqvae import VQVAELightning
+from src.models.vae import VAELightning, SSLLightning
 
 @rank_zero_only
 def log_config(logger, args):
@@ -34,10 +36,14 @@ def main(args):
     elif args.logger == "tensorboard":
         logger = TensorBoardLogger(args.data_dir, name=args.name)
 
+    if args.train_embedder:
+        filename = f"embedder_{args.name}_val_loss_" + "{epoch:02d}"
+    else:
+        filename = f"projector_{args.name}_val_loss_" + "{epoch:02d}"
     lr_monitor = LearningRateMonitor(logging_interval="step")
     checkpoint_loss = ModelCheckpoint(
         dirpath=f"{args.save_dir}/{args.project}/best_models/",
-        filename=f"{args.name}_val_loss_" + "{epoch:02d}",
+        filename=filename,
         monitor="val_loss_epoch",
         mode="min",
         verbose=1,
@@ -47,9 +53,10 @@ def main(args):
 
     trainer = Trainer(
         logger=logger,
-        devices="auto",
+        devices=1,
         accelerator="cuda",
-        strategy="ddp",
+        strategy="ddp_find_unused_parameters_true",
+        accumulate_grad_batches=16,
         deterministic=True,
         enable_model_summary=True,
         log_every_n_steps=1,
@@ -58,7 +65,8 @@ def main(args):
         precision=args.precision,
         default_root_dir=f"{args.save_dir}/{args.project}/",
         limit_train_batches=1000,
-        limit_val_batches=10
+        limit_val_batches=100,
+
     )
 
     # DATA
@@ -70,33 +78,64 @@ def main(args):
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=Collater("all"), num_workers=2)
 
     # MODEL
-    model = VQVAELightning(
-        optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
-        # scheduler = None,
-        model_kwargs={
-            "input_dim": 4,
-            "latent_dim": args.latent_dim,
-            "hidden_dim": args.hidden_dim,
-            "num_heads": args.num_heads,
-            "num_blocks": args.num_blocks,
-            "alpha": args.alpha,
-            "vq_kwargs": {
-                "num_codes": args.num_codes,
-                "beta": args.beta,
-                "kmeans_init": args.kmeans_init,
-                #   "norm": "null",
-                # "cb_norm": "null",
-                "affine_lr": args.affine_lr,
-                "sync_nu": args.sync_nu,
-                "replace_freq": args.replace_freq,
-                "dim": -1,
+    if args.train_embedder:
+        model = VAELightning(
+            optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
+            # scheduler = None,
+            model_kwargs={
+                "input_dim": 4,
+                "latent_dim": args.latent_dim,
+                "hidden_dim": args.hidden_dim,
+                "num_heads": args.num_heads,
+                "num_blocks": args.num_blocks,
+               # "vq_kwargs": {
+                  #  "num_codes": args.num_codes,
+                  #  "beta": args.beta,
+                  #  "kmeans_init": args.kmeans_init,
+                  #  #   "norm": "null",
+                    # "cb_norm": "null",
+                   # "affine_lr": args.affine_lr,
+                   # "sync_nu": args.sync_nu,
+                   # "replace_freq": args.replace_freq,
+                   # "dim": -1,
+               # },
+             
             },
-        },
-        model_type="VQVAENormFormer",
-    )
+            model_type="VAENormFormer",
+        )
+
+    else:
+
+        #load in pretrained embedder
+        embedder = VAELightning.load_from_checkpoint(
+            checkpoint_path="/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/test_val_loss_epoch=31.ckpt",
+        )
+        
+        model = SSLLightning(
+            embedding_model = embedder.model,
+            optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
+            # scheduler = None,
+            projector_kwargs={
+                "activation": "relu",
+                "nodes":[32, 32, 18],
+               }
+               # "vq_kwargs": {
+                  #  "num_codes": args.num_codes,
+                  #  "beta": args.beta,
+                  #  "kmeans_init": args.kmeans_init,
+                  # #   "norm": "null",
+                   # "cb_norm": "null",
+                   # "affine_lr": args.affine_lr,
+                   # "sync_nu": args.sync_nu,
+                   # "replace_freq": args.replace_freq,
+                   # "dim": -1,
+               # },
+                     )
+
+    
+
 
     trainer.fit(model, train_loader, val_loader)
-
     trainer.test(model, val_loader)
 
 
@@ -105,7 +144,7 @@ if __name__ == "__main__":
 
     # PROGRAM ARGS
     parser.add_argument("--gpu_id", type=str, default="0")
-    parser.add_argument("--precision", type=int, default=32, choices=[16, 32])
+    parser.add_argument("--precision", type=int, default=16, choices=[16, 32])
 
     parser.add_argument("--save_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/")
     parser.add_argument("--name", type=str, default="test")
@@ -120,22 +159,23 @@ if __name__ == "__main__":
     parser.add_argument("--num_files", type=int, default=10)
 
     # TRAINER ARGS
-    parser.add_argument("--max_epochs", type=int, default=3)
+    parser.add_argument("--max_epochs", type=int, default=50)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-2)
+    parser.add_argument("--train_embedder", action="store_true", default=False) # else train projector
 
     # MODEL args
     parser.add_argument("--hidden_dim", type=int, default=128)
-    parser.add_argument("--latent_dim", type=int, default=4)
-    parser.add_argument("--num_blocks", type=int, default=2)
-    parser.add_argument("--num_heads", type=int, default=4)
+    parser.add_argument("--latent_dim", type=int, default=32)
+    parser.add_argument("--num_blocks", type=int, default=1)
+    parser.add_argument("--num_heads", type=int, default=2)
     parser.add_argument("--alpha", type=int, default=5)
-    parser.add_argument("--num_codes", type=int, default=512)
-    parser.add_argument("--beta", type=float, default=0.9)
-    parser.add_argument("--kmeans_init", type=bool, default=True)
-    parser.add_argument("--affine_lr", type=float, default=0.0)
-    parser.add_argument("--sync_nu", type=int, default=2)
-    parser.add_argument("--replace_freq", type=int, default=20)
+    #parser.add_argument("--num_codes", type=int, default=32)
+    #parser.add_argument("--beta", type=float, default=0.9)
+    #parser.add_argument("--kmeans_init", type=bool, default=True)
+    #parser.add_argument("--affine_lr", type=float, default=0.0)
+    #parser.add_argument("--sync_nu", type=int, default=2)
+    #parser.add_argument("--replace_freq", type=int, default=20)
 
     args = parser.parse_args()
     main(args)
