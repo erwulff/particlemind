@@ -16,6 +16,8 @@ from torch.utils.data import DataLoader, TensorDataset
 import torch.distributed as dist
 
 from tqdm import tqdm
+from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
+
 
 # vqtorch can be installed from https://github.com/minyoungg/vqtorch
 try:
@@ -341,7 +343,7 @@ class VQVAELightning(L.LightningModule):
     def __init__(
         self,
         optimizer_kwargs={},
-        # scheduler_kwargs = {},
+        lr_scheduler_kwargs = {"use_scheduler":False},
         model_kwargs={},
         model_type="Transformer",
         **kwargs,
@@ -365,7 +367,7 @@ class VQVAELightning(L.LightningModule):
         self.validation_output = {}
 
         self.optimizer_kwargs = optimizer_kwargs
-        self.lr_scheduler = None # TODO
+        self.lr_scheduler_kwargs = lr_scheduler_kwargs
 
         # loss function (not used atm, since we calc MSE manually)
         self.criterion = torch.nn.MSELoss()
@@ -377,16 +379,32 @@ class VQVAELightning(L.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.model.parameters(), **self.optimizer_kwargs)
-        if self.lr_scheduler:
+
+        if self.lr_scheduler_kwargs["use_scheduler"]:
+            total_steps = self.trainer.limit_train_batches * self.trainer.max_epochs
+            warmup_steps = int(self.scheduler_kwargs["warmup_frac"] * total_steps)
+            cosine_steps = total_steps  - warmup_steps
+
+            scheduler = SequentialLR(
+                optimizer,
+                schedulers=[
+                    LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=warmup_steps),
+                    CosineAnnealingLR(optimizer, T_max=cosine_steps)
+                ],
+                milestones=[warmup_steps]
+            )
+
             return {
                 "optimizer": optimizer,
                 "lr_scheduler": {
-                    "scheduler": self.lr_scheduler(optimizer),
+                    "scheduler": scheduler,
                     "interval": self.lr_scheduler_interval,
                     "frequency": self.lr_scheduler_frequency,
                 },
             }
+
         return optimizer
+
 
     def forward(self, x_particle, mask_particle):
         x_particle_reco, vq_out = self.model(x_particle, mask=mask_particle)

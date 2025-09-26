@@ -15,6 +15,8 @@ from lightning.fabric.utilities.rank_zero import rank_zero_only
 from src.datasets.CLDHits import CLDHits
 from src.datasets.utils import Collater
 from src.models.vae import VAELightning, SSLLightning
+from src.models.vqvae import VQVAELightning
+
 
 @rank_zero_only
 def log_config(logger, args):
@@ -56,7 +58,7 @@ def main(args):
         devices=1,
         accelerator="cuda",
         strategy="ddp_find_unused_parameters_true",
-        accumulate_grad_batches=16,
+        accumulate_grad_batches=args.accumulate_grad_batches,
         deterministic=True,
         enable_model_summary=True,
         log_every_n_steps=1,
@@ -79,29 +81,30 @@ def main(args):
 
     # MODEL
     if args.train_embedder:
-        model = VAELightning(
+        model = VQVAELightning(
             optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
-            # scheduler = None,
+            scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
             model_kwargs={
                 "input_dim": 4,
                 "latent_dim": args.latent_dim,
                 "hidden_dim": args.hidden_dim,
                 "num_heads": args.num_heads,
                 "num_blocks": args.num_blocks,
-               # "vq_kwargs": {
-                  #  "num_codes": args.num_codes,
-                  #  "beta": args.beta,
-                  #  "kmeans_init": args.kmeans_init,
-                  #  #   "norm": "null",
-                    # "cb_norm": "null",
-                   # "affine_lr": args.affine_lr,
-                   # "sync_nu": args.sync_nu,
-                   # "replace_freq": args.replace_freq,
-                   # "dim": -1,
-               # },
+                "alpha": args.alpha,
+                "vq_kwargs": {
+                    "num_codes": args.num_codes,
+                    "beta": args.beta,
+                    "kmeans_init": args.kmeans_init,
+                   # "norm": "null",
+                   #  "cb_norm": "null",
+                    "affine_lr": args.affine_lr,
+                    "sync_nu": args.sync_nu,
+                    "replace_freq": args.replace_freq,
+                    "dim": -1,
+                },
              
             },
-            model_type="VAENormFormer",
+            model_type="VQVAENormFormer",
         )
 
     else:
@@ -119,17 +122,6 @@ def main(args):
                 "activation": "relu",
                 "nodes":[32, 32, 18],
                }
-               # "vq_kwargs": {
-                  #  "num_codes": args.num_codes,
-                  #  "beta": args.beta,
-                  #  "kmeans_init": args.kmeans_init,
-                  # #   "norm": "null",
-                   # "cb_norm": "null",
-                   # "affine_lr": args.affine_lr,
-                   # "sync_nu": args.sync_nu,
-                   # "replace_freq": args.replace_freq,
-                   # "dim": -1,
-               # },
                      )
 
     
@@ -156,6 +148,7 @@ if __name__ == "__main__":
         "--data_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles"
     )
     parser.add_argument("--batch_size", type=int, default=2)
+    parser.add_argument("--accumulate_grad_batches", type=int, default=16)
     parser.add_argument("--num_files", type=int, default=10)
 
     # TRAINER ARGS
@@ -166,16 +159,16 @@ if __name__ == "__main__":
 
     # MODEL args
     parser.add_argument("--hidden_dim", type=int, default=128)
-    parser.add_argument("--latent_dim", type=int, default=32)
-    parser.add_argument("--num_blocks", type=int, default=1)
+    parser.add_argument("--latent_dim", type=int, default=16)
+    parser.add_argument("--num_blocks", type=int, default=2)
     parser.add_argument("--num_heads", type=int, default=2)
     parser.add_argument("--alpha", type=int, default=5)
-    #parser.add_argument("--num_codes", type=int, default=32)
-    #parser.add_argument("--beta", type=float, default=0.9)
-    #parser.add_argument("--kmeans_init", type=bool, default=True)
-    #parser.add_argument("--affine_lr", type=float, default=0.0)
-    #parser.add_argument("--sync_nu", type=int, default=2)
-    #parser.add_argument("--replace_freq", type=int, default=20)
+    parser.add_argument("--num_codes", type=int, default=512)
+    parser.add_argument("--beta", type=float, default=0.9)
+    parser.add_argument("--kmeans_init", type=bool, default=True)
+    parser.add_argument("--affine_lr", type=float, default=0.0)
+    parser.add_argument("--sync_nu", type=int, default=2)
+    parser.add_argument("--replace_freq", type=int, default=20)
 
     args = parser.parse_args()
     main(args)

@@ -208,7 +208,7 @@ class VAELightning(L.LightningModule):
     def __init__(
         self,
         optimizer_kwargs={},
-        lr_scheduler_kwargs = {"use_scheduler":True},
+        lr_scheduler_kwargs = {"use_scheduler":False},
         model_kwargs={},
         model_type="Transformer",
         **kwargs,
@@ -467,7 +467,11 @@ class SSLLightning(L.LightningModule):
         # z_embed has shape (B, num_hits, latent_dim)
 
         with torch.no_grad():
-            x_particle_reco, z_embed = self.embedding_model(x_particle, mask_particle)
+            #x_particle_reco, z_embed = self.embedding_model(x_particle, mask_particle) # for VAE
+            x_particle_reco, vq_out = self.embedding_model(x_particle, mask_particle) # for VQVAE
+            z_embed = vq_out["z"]
+            print(z_embed.shape)
+            exit()
 
         # TODO: aggregate THE DATA IN A SMARTER WAY
         z_embed = z_embed.mean(dim=1) # (B, latent_dim)
