@@ -247,7 +247,7 @@ class VAELightning(L.LightningModule):
 
         if self.lr_scheduler_kwargs["use_scheduler"]:
             total_steps = self.trainer.limit_train_batches * self.trainer.max_epochs
-            warmup_steps = int(self.scheduler_kwargs["warmup_frac"] * total_steps)
+            warmup_steps = int(self.lr_scheduler_kwargs["warmup_frac"] * total_steps)
             cosine_steps = total_steps  - warmup_steps
 
             scheduler = SequentialLR(
@@ -263,8 +263,8 @@ class VAELightning(L.LightningModule):
                 "optimizer": optimizer,
                 "lr_scheduler": {
                     "scheduler": scheduler,
-                    "interval": self.lr_scheduler_interval,
-                    "frequency": self.lr_scheduler_frequency,
+                    "interval": "step",
+                    "frequency":1,
                 },
             }
 
@@ -432,9 +432,11 @@ class SSLLightning(L.LightningModule):
         self.val_mask = []
 
     def configure_optimizers(self):
+
         optimizer = torch.optim.AdamW(self.projector.parameters(), **self.optimizer_kwargs)
 
         if self.lr_scheduler_kwargs["use_scheduler"]:
+            
             total_steps = self.trainer.limit_train_batches * self.trainer.max_epochs
             warmup_steps = int(self.lr_scheduler_kwargs["warmup_frac"] * total_steps)
             cosine_steps = total_steps  - warmup_steps
@@ -452,8 +454,8 @@ class SSLLightning(L.LightningModule):
                 "optimizer": optimizer,
                 "lr_scheduler": {
                     "scheduler": scheduler,
-                    "interval": self.lr_scheduler_interval,
-                    "frequency": self.lr_scheduler_frequency,
+                    "interval": "step",
+                    "frequency":1,
                 },
             }
 
@@ -467,11 +469,9 @@ class SSLLightning(L.LightningModule):
         # z_embed has shape (B, num_hits, latent_dim)
 
         with torch.no_grad():
-            #x_particle_reco, z_embed = self.embedding_model(x_particle, mask_particle) # for VAE
-            x_particle_reco, vq_out = self.embedding_model(x_particle, mask_particle) # for VQVAE
-            z_embed = vq_out["z"]
-            print(z_embed.shape)
-            exit()
+            x_particle_reco, vq_out = self.embedding_model(x_particle, mask_particle)
+            z_embed = vq_out["z_q"] # shape: (B, n_hits, 1, latent_dim)
+            z_embed = torch.squeeze(z_embed, dim=2)
 
         # TODO: aggregate THE DATA IN A SMARTER WAY
         z_embed = z_embed.mean(dim=1) # (B, latent_dim)
@@ -482,8 +482,7 @@ class SSLLightning(L.LightningModule):
 
     def augment_data(self, x):
 
-        # TODO
-        return x
+        return x + torch.normal(mean=0, std=1e-8) # TODO
 
     def contrastive_loss(self, z1, z2, temperature=0.1, alpha=1):
 

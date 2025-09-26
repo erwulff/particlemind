@@ -66,8 +66,8 @@ def main(args):
         callbacks=callbacks,
         precision=args.precision,
         default_root_dir=f"{args.save_dir}/{args.project}/",
-        limit_train_batches=1000,
-        limit_val_batches=100,
+        limit_train_batches=3000,
+        limit_val_batches=300,
 
     )
 
@@ -83,7 +83,7 @@ def main(args):
     if args.train_embedder:
         model = VQVAELightning(
             optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
-            scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
+            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
             model_kwargs={
                 "input_dim": 4,
                 "latent_dim": args.latent_dim,
@@ -110,14 +110,15 @@ def main(args):
     else:
 
         #load in pretrained embedder
-        embedder = VAELightning.load_from_checkpoint(
-            checkpoint_path="/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/test_val_loss_epoch=31.ckpt",
+        embedder = VQVAELightning.load_from_checkpoint(
+            checkpoint_path="/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=03.ckpt",
         )
         
         model = SSLLightning(
             embedding_model = embedder.model,
             optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
-            # scheduler = None,
+            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
+
             projector_kwargs={
                 "activation": "relu",
                 "nodes":[32, 32, 18],
@@ -148,8 +149,8 @@ if __name__ == "__main__":
         "--data_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles"
     )
     parser.add_argument("--batch_size", type=int, default=2)
-    parser.add_argument("--accumulate_grad_batches", type=int, default=16)
-    parser.add_argument("--num_files", type=int, default=10)
+    parser.add_argument("--accumulate_grad_batches", type=int, default=128)
+    parser.add_argument("--num_files", type=int, default=30)
 
     # TRAINER ARGS
     parser.add_argument("--max_epochs", type=int, default=50)

@@ -149,7 +149,7 @@ class CLDHits(IterableDataset):
                         # "hit_idx": hit_idx,
                         # "weights": weights,
                         "hit_labels": hit_labels,
-                        "calo_hit_features": calo_hit_features,
+                        "calo_hit_features": standardize_calo_hit_features(calo_hit_features),
                     }
 
                 else:

@@ -378,32 +378,43 @@ class VQVAELightning(L.LightningModule):
         self.val_mask = []
 
     def configure_optimizers(self):
+        # --- Optimizer --- #
         optimizer = torch.optim.AdamW(self.model.parameters(), **self.optimizer_kwargs)
-
+    
+        # --- Scheduler --- #
         if self.lr_scheduler_kwargs["use_scheduler"]:
             total_steps = self.trainer.limit_train_batches * self.trainer.max_epochs
-            warmup_steps = int(self.scheduler_kwargs["warmup_frac"] * total_steps)
-            cosine_steps = total_steps  - warmup_steps
-
+            warmup_frac = self.lr_scheduler_kwargs.get("warmup_frac", 0.01)
+            warmup_steps = max(int(total_steps * warmup_frac), 1)
+            cosine_steps = total_steps - warmup_steps
+    
+            # Linear warmup
+            warmup_scheduler = LinearLR(
+                optimizer, start_factor=1e-6, end_factor=1.0, total_iters=warmup_steps
+            )
+            # Cosine decay
+            cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_steps, eta_min=1e-6)
+    
+            # Combine schedulers
             scheduler = SequentialLR(
                 optimizer,
-                schedulers=[
-                    LinearLR(optimizer, start_factor=1e-6, end_factor=1.0, total_iters=warmup_steps),
-                    CosineAnnealingLR(optimizer, T_max=cosine_steps)
-                ],
-                milestones=[warmup_steps]
+                schedulers=[warmup_scheduler, cosine_scheduler],
+                milestones=[warmup_steps],
             )
-
+    
+            # Lightning dict format
             return {
                 "optimizer": optimizer,
                 "lr_scheduler": {
                     "scheduler": scheduler,
-                    "interval": self.lr_scheduler_interval,
-                    "frequency": self.lr_scheduler_frequency,
+                    "interval": "step",      # step-wise LR updates
+                    "frequency": 1,
+                    "name": "lr",            # wandb logging name
                 },
             }
-
+    
         return optimizer
+
 
 
     def forward(self, x_particle, mask_particle):
@@ -747,7 +758,7 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
         z_e[:n_examples_to_plot, 1],
         alpha=0.4,
         marker="o",
-        label="Samples",
+        label="Pre-VQ",
         **style_true_emb,
     )
     ax.scatter(
@@ -755,7 +766,7 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
         z_q[:n_examples_to_plot, 1],
         alpha=0.6,
         marker="x",
-        label="Closest tokens",
+        label="Post-VQ",
         **style_tokens_emb,
     )
     ax.set_xlabel("$e_1$")
@@ -770,7 +781,7 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
         alpha=0.2,
         s=26,
         **style_true_emb,
-        label="Samples",
+        label="Pre-VQ",
     )
     ax.scatter(
         z_q[:n_examples_to_plot, 0],
@@ -779,7 +790,7 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
         s=26,
         **style_tokens_emb,
         marker="x",
-        label="Closest tokens",
+        label="Post-VQ",
     )
     ax.set_xlabel("$e_1$")
     ax.set_ylabel("$e_3$")
@@ -795,7 +806,7 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
         alpha=0.2,
         s=26,
         **style_true,
-        label="Original",
+        label="Data",
     )
     ax.set_xlabel("$x_1$")
     ax.set_ylabel("$x_2$")
@@ -808,7 +819,7 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
         s=26,
         marker="x",
         **style_tokens,
-        label="Reco. token",
+        label="Reco",
     )
     ax.set_xlabel("$x_1$")
     ax.set_ylabel("$x_2$")
@@ -823,7 +834,7 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
         s=26,
         alpha=0.2,
         **style_true,
-        label="Original",
+        label="Data",
     )
     ax.scatter(
         r[:n_examples_to_plot, 0],
@@ -832,7 +843,7 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
         alpha=0.7,
         **style_tokens,
         marker="x",
-        label="Reco. tokens",
+        label="Reco",
     )
     ax.set_xlabel("$x_1$")
     ax.set_ylabel("$x_3$")
