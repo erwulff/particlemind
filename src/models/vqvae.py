@@ -383,7 +383,7 @@ class VQVAELightning(L.LightningModule):
     
         # --- Scheduler --- #
         if self.lr_scheduler_kwargs["use_scheduler"]:
-            total_steps = self.trainer.limit_train_batches * self.trainer.max_epochs
+            total_steps = (self.trainer.limit_train_batches // self.trainer.accumulate_grad_batches) * self.trainer.max_epochs
             warmup_frac = self.lr_scheduler_kwargs.get("warmup_frac", 0.01)
             warmup_steps = max(int(total_steps * warmup_frac), 1)
             cosine_steps = total_steps - warmup_steps
@@ -491,6 +491,7 @@ class VQVAELightning(L.LightningModule):
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
 
+ 
         # save the original and reconstructed data
         self.val_x_original.append(x_original.detach().cpu().numpy())
         self.val_x_reco.append(x_reco.detach().cpu().numpy())
@@ -512,12 +513,13 @@ class VQVAELightning(L.LightningModule):
 
             plot_dir = Path(self.trainer.default_root_dir + "/plots/")
             plot_dir.mkdir(exist_ok=True)
-            plot_filename = f"{plot_dir}/epoch{curr_epoch}_gstep{curr_step}_original_vs_reco.png"
+            plot_filename = f"{plot_dir}/epoch{curr_epoch}_gstep{curr_step}_original_vs_reco"
             # log the plot
             plot_model(
                 self.model,
                 samples=batch["calo_hit_features"],
                 masks=batch["calo_hit_mask"],
+                labels=batch["hit_labels"],
                 device=self.device,
                 saveas=plot_filename,
             )
@@ -695,7 +697,7 @@ class VQVAELightning(L.LightningModule):
     """
 
 
-def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None, saveas=None):
+def plot_model(model, samples, labels, device="cuda", n_examples_to_plot=200, masks=None, saveas=None):
     """Visualize the model.
 
     Parameters
@@ -712,169 +714,212 @@ def plot_model(model, samples, device="cuda", n_examples_to_plot=200, masks=None
 
     samples = samples.to(device)
     model = model.to(device)
+   
 
     # run the model on the input data
     with torch.no_grad():
         # print(f"Model device: {next(model.parameters()).device}")
         # print(f"Samples device: {samples.device}")
-        r, vq_out = model(samples, masks)
-        z_q = vq_out["z_q"]
-        z_e = vq_out["z"]
-        idx = vq_out["q"]
-
-        if masks is not None:
-            r = r[masks == 1]
-            z_e = z_e[masks == 1]
-            z_q = z_q[masks == 1]
-            idx = idx[masks == 1]
-
-        z_e = z_e.squeeze(1)
-        z_q = z_q.squeeze(1)
-        idx = idx.squeeze(1)
+        reco, vq_out = model(samples, masks)
+        
+        master_z_q = vq_out["z_q"]
+        master_z_e = vq_out["z"]
+        master_idx = vq_out["q"]
 
         # move r, z_e, z_q, idx to cpu for plotting
-        r = r.detach().cpu()
-        z_e = z_e.detach().cpu()
-        z_q = z_q.detach().cpu()
-        idx = idx.detach().cpu()
+        reco = reco.detach().cpu().numpy()
+        master_z_e = master_z_e.detach().cpu().numpy()
+        master_z_q = master_z_q.detach().cpu().numpy()
+        master_idx = master_idx.detach().cpu().numpy()
 
     samples = samples.detach().cpu().numpy()
     if masks is not None:
         masks = masks.detach().cpu().numpy()
-        samples = samples[masks == 1]
 
-    # create detached copy of the codebook to plot this
-    fig, axarr = plt.subplots(1, 5, figsize=(30, 6))
-    # axarr = axarr.flatten()
+    # convert samples and reco to pt eta phi
+    for event in range(2):
 
-    style_tokens = dict(color="forestgreen")
-    style_true = dict(color="royalblue")
-    style_tokens_emb = dict(color="darkorange")
-    style_true_emb = dict(color="darkorchid")
 
-    ax = axarr[0]
-    ax.scatter(
-        z_e[:n_examples_to_plot, 0],
-        z_e[:n_examples_to_plot, 1],
-        alpha=0.4,
-        marker="o",
-        label="Pre-VQ",
-        **style_true_emb,
-    )
-    ax.scatter(
-        z_q[:n_examples_to_plot, 0],
-        z_q[:n_examples_to_plot, 1],
-        alpha=0.6,
-        marker="x",
-        label="Post-VQ",
-        **style_tokens_emb,
-    )
-    ax.set_xlabel("$e_1$")
-    ax.set_ylabel("$e_2$")
-    ax.legend(loc="upper right")
-    ax.set_title("Embeddings \n(samples and closest tokens)")
+        event_samples_E = samples[event, :, 3]
+        event_samples_x = samples[event, :, 0]
+        event_samples_y = samples[event, :, 1]
+        event_samples_z = samples[event, :, 2]
 
-    ax = axarr[1]
-    ax.scatter(
-        z_e[:n_examples_to_plot, 0],
-        z_e[:n_examples_to_plot, 2],
-        alpha=0.2,
-        s=26,
-        **style_true_emb,
-        label="Pre-VQ",
-    )
-    ax.scatter(
-        z_q[:n_examples_to_plot, 0],
-        z_q[:n_examples_to_plot, 2],
-        alpha=0.7,
-        s=26,
-        **style_tokens_emb,
-        marker="x",
-        label="Post-VQ",
-    )
-    ax.set_xlabel("$e_1$")
-    ax.set_ylabel("$e_3$")
-    ax.set_title("Embeddings \n(samples and closest token)")
-    ax.legend(loc="upper right")
+        reco_samples_E = reco[event, :, 3]
+        reco_samples_x = reco[event, :, 0]
+        reco_samples_y = reco[event, :, 1]
+        reco_samples_z = reco[event, :, 2]
 
-    # plot the original sample and the reconstructed sample (the first sample in the batch)
-    # plot original sample
-    ax = axarr[2]
-    ax.scatter(
-        samples[:n_examples_to_plot, 0],
-        samples[:n_examples_to_plot, 1],
-        alpha=0.2,
-        s=26,
-        **style_true,
-        label="Data",
-    )
-    ax.set_xlabel("$x_1$")
-    ax.set_ylabel("$x_2$")
-    ax.set_title("Original constituents \n(first few in batch)")
-    # plot reconstructed sample
-    ax.scatter(
-        r[:n_examples_to_plot, 0],
-        r[:n_examples_to_plot, 1],
-        alpha=0.7,
-        s=26,
-        marker="x",
-        **style_tokens,
-        label="Reco",
-    )
-    ax.set_xlabel("$x_1$")
-    ax.set_ylabel("$x_2$")
-    ax.set_title("Data space \nTrue vs reconstructed")
-    ax.legend(loc="upper right")
+        labels_event = labels[event].detach().cpu().numpy()
 
-    # plot true vs reconstructed for deltaR and ptrel
-    ax = axarr[3]
-    ax.scatter(
-        samples[:n_examples_to_plot, 0],
-        samples[:n_examples_to_plot, 2],
-        s=26,
-        alpha=0.2,
-        **style_true,
-        label="Data",
-    )
-    ax.scatter(
-        r[:n_examples_to_plot, 0],
-        r[:n_examples_to_plot, 2],
-        s=26,
-        alpha=0.7,
-        **style_tokens,
-        marker="x",
-        label="Reco",
-    )
-    ax.set_xlabel("$x_1$")
-    ax.set_ylabel("$x_3$")
-    ax.legend(loc="upper right")
-    ax.set_title("Data space \nTrue vs reconstructed")
+        z_e = master_z_e[event]
+        z_q = master_z_q[event]
+        idx = master_idx[event]
 
-    # plot the histogram of the codebook indices (i.e. a codebook_size x codebook_size
-    # histogram with each entry in the histogram corresponding to one sample associated
-    # with the corresponding codebook entry)
-    ax = axarr[4]
-    n_codes = model.vq_kwargs["num_codes"]
-    bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
-    ax.hist(idx, bins=bins)
-    ax.set_yscale("log")
-    ax.set_title(
-        "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that" " codebook entry)",
-        fontsize=8,
-    )
 
-    # make empty axes invisible
-    def is_axes_empty(ax):
-        return not (ax.lines or ax.patches or ax.collections or ax.images or ax.texts or ax.artists or ax.tables)
+        if masks is not None:
 
-    for ax in axarr.flatten():
-        if is_axes_empty(ax):
-            ax.set_visible(False)
+            mask = masks[event]
+            event_samples_E = event_samples_E[mask == 1]
+            event_samples_x = event_samples_x[mask == 1]
+            event_samples_y = event_samples_y[mask == 1]
+            event_samples_z = event_samples_z[mask == 1]
+            reco_samples_E = reco_samples_E[mask == 1]
+            reco_samples_x = reco_samples_x[mask == 1]
+            reco_samples_y = reco_samples_y[mask == 1]
+            reco_samples_z = reco_samples_z[mask == 1]
+            labels_event = labels_event[mask == 1]
+          
+            z_e = z_e.squeeze(1)[mask == 1]
+            z_q = z_q.squeeze(1)[mask == 1]
+            idx = idx.squeeze(1)[mask == 1]
 
-    fig.tight_layout()
-    plt.show()
-    if saveas is not None:
-        fig.savefig(saveas)
+
+
+
+        # create detached copy of the codebook to plot this
+        fig, axarr = plt.subplots(1, 7, figsize=(7*7, 7))
+        # axarr = axarr.flatten()
+
+        # histogram the energies
+        ax = axarr[0]
+        bins = np.linspace(np.min(event_samples_E), np.max(event_samples_E), 50)
+        ax.hist(event_samples_E, bins=bins, label="samples", density=True, histtype="step", linewidth=2)
+        ax.hist(reco_samples_E, bins=bins, label="reco", density=True, histtype="step", linewidth=2)
+        ax.set_yscale("log")
+        ax.set_xlabel("$E$")
+        ax.set_ylabel("Density")
+        ax.legend(loc="upper right")
+
+        # histogram the difference in energy
+        ax = axarr[1]
+        ax.hist(event_samples_E - reco_samples_E, bins=50, density=True, histtype="step", linewidth=2)
+        ax.set_xlabel("$E_{true} - E_{reco}$")
+        ax.set_ylabel("Density")
+
+        # scatter some zq - ze
+        ax = axarr[2]
+        ax.scatter(
+            z_q[:n_examples_to_plot, 0],
+            z_q[:n_examples_to_plot, 1],
+            alpha=0.2,
+            s=26,
+            label="z_q",
+        )
+        ax.scatter(
+            z_e[:n_examples_to_plot, 0],
+            z_e[:n_examples_to_plot, 1],
+            alpha=0.7,
+            s=26,
+            marker="x",
+            label="z_e",
+        )
+        ax.set_xlabel("$x_0$")
+        ax.set_ylabel("$x_1$")
+        ax.set_title("Data space \nTrue vs reconstructed")
+        ax.legend(loc="upper right")
+
+        ax = axarr[3]
+        ax.scatter(
+            z_q[:n_examples_to_plot, 0],
+            z_q[:n_examples_to_plot, 2],
+            alpha=0.2,
+            s=26,
+            label="z_q",
+        )
+        ax.scatter(
+            z_e[:n_examples_to_plot, 0],
+            z_e[:n_examples_to_plot, 2],
+            alpha=0.7,
+            s=26,
+            marker="x",
+            label="z_e",
+        )
+        ax.set_xlabel("$x_0$")
+        ax.set_ylabel("$x_2$")
+        ax.set_title("Data space \nTrue vs reconstructed")
+        ax.legend(loc="upper right")
+        # plot the histogram of the codebook indices (i.e. a codebook_size x codebook_size
+        # histogram with each entry in the histogram corresponding to one sample associated
+        # with the corresponding codebook entry)
+        ax = axarr[4]
+        n_codes = model.vq_kwargs["num_codes"]
+        bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
+        ax.hist(idx, bins=bins)
+        ax.set_yscale("log")
+        ax.set_title(
+            "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that" " codebook entry)",
+            fontsize=8,
+        )
+
+        
+    
+        ax = axarr[5]
+         # Make a 3d scatter plot for event and reconstructed samples in x, y, z
+        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+        unique_labels = np.unique(labels_event)
+        cmap = plt.get_cmap("viridis")
+        colors = cmap(np.linspace(0, 1, len(unique_labels)))
+
+
+        ax = fig.add_subplot(1, 7,  6, projection='3d')
+        # plot event (true) samples, color-coded by label
+        hit_clusters_true, hit_clusters_reco = [], []
+        for i, label in enumerate(unique_labels):
+            mask = labels_event == label
+            ax.scatter(
+                event_samples_x[mask],
+                event_samples_y[mask],
+                event_samples_z[mask],
+                s=20,
+                alpha=0.6,
+                color=colors[i],
+                label=f"label {label} (true)"
+            )
+
+            ax.scatter(
+                reco_samples_x[mask],
+                reco_samples_y[mask],
+                reco_samples_z[mask],
+                s=20,
+                alpha=0.9,
+                marker="x",
+                color=colors[i],
+                label=f"label {label} (reco)"
+            )
+
+            # also get delta E for the hit
+            hit_clusters_true.append(np.sum(event_samples_E[mask]))
+            hit_clusters_reco.append(np.sum(reco_samples_E[mask]))
+
+        ax.set_xlabel("$x$")
+        ax.set_ylabel("$y$")
+        ax.set_zlabel("$z$")
+        #ax.legend(loc=(1,0))
+        ax.set_title("Hit spatial distribution")
+
+        ax = axarr[6]
+        ax.hist(np.array(hit_clusters_true) - np.array(hit_clusters_reco), bins=50, density=True, histtype="step", linewidth=2)
+        ax.set_xlabel(  "$E_{true} - E_{reco}$ per cluster")
+        ax.set_ylabel("Density")
+        ax.legend(loc="upper right")
+
+
+        # make empty axes invisible
+        def is_axes_empty(ax):
+            return not (ax.lines or ax.patches or ax.collections or ax.images or ax.texts or ax.artists or ax.tables)
+
+        for ax in axarr.flatten():
+            if is_axes_empty(ax):
+                ax.set_visible(False)
+
+
+        fig.tight_layout()
+        plt.show()
+        if saveas is not None:
+            fig.savefig(saveas)
+
 
 
 def plot_loss(loss_history, lr_history, moving_average=100):

@@ -26,13 +26,18 @@ def log_config(logger, args):
 
 def main(args):
 
+    if args.train_embedder:
+        project = "vqvae_training"
+    else:
+        project = "SSL_training"
+
     seed_everything(0)
     #os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     os.environ["WANDB_CACHE_DIR"] = "/pscratch/sd/r/rmastand/"
 
     if args.logger == "wandb":
         logger = WandbLogger(
-            name=args.name, project=args.project, save_dir=f"{args.save_dir}/{args.project}/", log_model="all"
+            name=args.name, project=project, save_dir=f"{args.save_dir}/{project}/", log_model="all"
         )
         log_config(logger, args)
     elif args.logger == "tensorboard":
@@ -44,7 +49,7 @@ def main(args):
         filename = f"projector_{args.name}_val_loss_" + "{epoch:02d}"
     lr_monitor = LearningRateMonitor(logging_interval="step")
     checkpoint_loss = ModelCheckpoint(
-        dirpath=f"{args.save_dir}/{args.project}/best_models/",
+        dirpath=f"{args.save_dir}/{project}/best_models/",
         filename=filename,
         monitor="val_loss_epoch",
         mode="min",
@@ -65,9 +70,9 @@ def main(args):
         max_epochs=args.max_epochs,
         callbacks=callbacks,
         precision=args.precision,
-        default_root_dir=f"{args.save_dir}/{args.project}/",
-        limit_train_batches=3000,
-        limit_val_batches=300,
+        default_root_dir=f"{args.save_dir}/{project}/",
+        limit_train_batches=10,
+        limit_val_batches=10,
 
     )
 
@@ -83,7 +88,7 @@ def main(args):
     if args.train_embedder:
         model = VQVAELightning(
             optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
-            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
+            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.1},
             model_kwargs={
                 "input_dim": 4,
                 "latent_dim": args.latent_dim,
@@ -111,17 +116,17 @@ def main(args):
 
         #load in pretrained embedder
         embedder = VQVAELightning.load_from_checkpoint(
-            checkpoint_path="/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=03.ckpt",
+            checkpoint_path="/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=48.ckpt",
         )
         
         model = SSLLightning(
             embedding_model = embedder.model,
             optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
-            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
+            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.1},
 
             projector_kwargs={
                 "activation": "relu",
-                "nodes":[32, 32, 18],
+                "nodes":[16, 64, 64, 64],
                }
                      )
 
@@ -141,7 +146,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--save_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/")
     parser.add_argument("--name", type=str, default="test")
-    parser.add_argument("--project", type=str, default="vqvae_training")
     parser.add_argument("--logger", type=str, default="wandb", choices=["tensorboard", "wandb"])
 
     # DATA ARGS
