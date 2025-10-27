@@ -1,7 +1,6 @@
 --extra-index-url https://download.pytorch.org/whl/cu121
 awkward
 fastjet
-h5py
 hydra-colorlog
 hydra-core
 ipykernel
