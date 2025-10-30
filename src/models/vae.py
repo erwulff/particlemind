@@ -246,7 +246,7 @@ class VAELightning(L.LightningModule):
         optimizer = torch.optim.AdamW(self.model.parameters(), **self.optimizer_kwargs)
 
         if self.lr_scheduler_kwargs["use_scheduler"]:
-            total_steps = self.trainer.limit_train_batches * self.trainer.max_epochs
+            total_steps = (self.trainer.limit_train_batches // self.trainer.accumulate_grad_batches) * self.trainer.max_epochs
             warmup_steps = int(self.lr_scheduler_kwargs["warmup_frac"] * total_steps)
             cosine_steps = total_steps  - warmup_steps
 
@@ -437,7 +437,7 @@ class SSLLightning(L.LightningModule):
 
         if self.lr_scheduler_kwargs["use_scheduler"]:
             
-            total_steps = self.trainer.limit_train_batches * self.trainer.max_epochs
+            total_steps = (self.trainer.limit_train_batches // self.trainer.accumulate_grad_batches) * self.trainer.max_epochs
             warmup_steps = int(self.lr_scheduler_kwargs["warmup_frac"] * total_steps)
             cosine_steps = total_steps  - warmup_steps
 
@@ -482,7 +482,8 @@ class SSLLightning(L.LightningModule):
 
     def augment_data(self, x):
 
-        return x + torch.normal(mean=0, std=1e-8) # TODO
+        aug = torch.normal(mean=torch.zeros_like(x), std=1e-6*torch.ones_like(x))
+        return x + aug # TODO
 
     def contrastive_loss(self, z1, z2, temperature=0.1, alpha=1):
 

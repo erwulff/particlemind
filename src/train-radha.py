@@ -71,8 +71,8 @@ def main(args):
         callbacks=callbacks,
         precision=args.precision,
         default_root_dir=f"{args.save_dir}/{project}/",
-        limit_train_batches=10,
-        limit_val_batches=10,
+        limit_train_batches=1000,
+        limit_val_batches=300,
 
     )
 
@@ -88,7 +88,7 @@ def main(args):
     if args.train_embedder:
         model = VQVAELightning(
             optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
-            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.1},
+            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
             model_kwargs={
                 "input_dim": 4,
                 "latent_dim": args.latent_dim,
@@ -122,7 +122,7 @@ def main(args):
         model = SSLLightning(
             embedding_model = embedder.model,
             optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
-            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.1},
+            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
 
             projector_kwargs={
                 "activation": "relu",
