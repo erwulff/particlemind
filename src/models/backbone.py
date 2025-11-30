@@ -301,11 +301,13 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
 
     def configure_optimizers(self):
         # --- Optimizer --- #
-        optimizer = torch.optim.AdamW(self.module.parameters(), **self.optimizer_kwargs)
-    
+        optimizer = torch.optim.AdamW(self.model.parameters(), **self.optimizer_kwargs)
+
+
+        print("estimated steps", self.trainer.estimated_stepping_batches)
         # --- Scheduler --- #
         if self.lr_scheduler_kwargs["use_scheduler"]:
-            total_steps = (self.trainer.limit_train_batches // self.trainer.accumulate_grad_batches) * self.trainer.max_epochs
+            total_steps = self.trainer.estimated_stepping_batches
             warmup_frac = self.lr_scheduler_kwargs.get("warmup_frac", 0.01)
             warmup_steps = max(int(total_steps * warmup_frac), 1)
             cosine_steps = total_steps - warmup_steps
