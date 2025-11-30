@@ -428,7 +428,7 @@ class VQVAELightning(L.LightningModule):
 
         # x_particle, mask_particle, labels = batch
         x_particle = batch["calo_hit_features"]
-        mask_particle = batch["calo_hit_mask"]
+        mask_particle = batch["mask"]
         labels = batch["hit_labels"]
 
 
@@ -449,7 +449,7 @@ class VQVAELightning(L.LightningModule):
         """Perform a single training step on a batch of data from the training set."""
         loss = self.model_step(batch)
 
-        self.train_loss_history.append(float(loss))
+        self.train_loss_history.append(loss.detach().cpu().numpy())
         self.log("train_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
 
         return loss
@@ -520,7 +520,7 @@ class VQVAELightning(L.LightningModule):
             plot_model(
                 self.model,
                 input_data=batch["calo_hit_features"],
-                masks=batch["calo_hit_mask"],
+                masks=batch["mask"],
                 labels=batch["hit_labels"],
                 device=self.device,
                 saveas=plot_filename,
@@ -582,7 +582,7 @@ class VQVAELightning(L.LightningModule):
 
                 # move to device
                 features_batch = x_batch["calo_hit_features"].to(self.device)
-                mask_batch = x_batch["calo_hit_mask"].to(self.device)
+                mask_batch = x_batch["mask"].to(self.device)
                 x_particle_reco, vq_out = self.forward(features_batch, mask_batch)
                 code = vq_out["q"]
 
@@ -935,7 +935,7 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     ax.hist(np.array(hit_clusters_true) - np.array(hit_clusters_reco), bins=50, density=True, histtype="step", linewidth=2)
     ax.set_xlabel(  "$E_{true} - E_{reco}$ per cluster")
     ax.set_ylabel("Density")
-    ax.legend(loc="upper right")
+    #ax.legend(loc="upper right")
 
 
     
