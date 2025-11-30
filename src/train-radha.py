@@ -13,6 +13,7 @@ from lightning.pytorch.loggers import WandbLogger, TensorBoardLogger
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 
 from src.datasets.CLDHits import CLDHits, CLDHitsSingleFile
+from src.datasets.Tokens import Tokens
 from src.datasets.utils import Collater
 # from src.models.vae import VAELightning, SSLLightning
 from src.models.vqvae import VQVAELightning
@@ -26,11 +27,10 @@ def log_config(logger, args):
 
 
 def main(args):
-
     if args.train_embedder:
         project = "vqvae_training"
-    else:
-        project = "SSL_training"
+    elif args.train_tokenizer
+        project = "tokenizer_training"
 
     seed_everything(0)
     #os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -46,8 +46,8 @@ def main(args):
 
     if args.train_embedder:
         filename = f"embedder_{args.name}_val_loss_" + "{epoch:02d}"
-    else:
-        filename = f"projector_{args.name}_val_loss_" + "{epoch:02d}"
+    elif args.train_tokenizer
+        filename = f"tokenizer_{args.name}_val_loss_" + "{epoch:02d}"
     lr_monitor = LearningRateMonitor(logging_interval="step")
     checkpoint_loss = ModelCheckpoint(
         dirpath=f"{args.save_dir}/{project}/best_models/",
@@ -128,7 +128,7 @@ def main(args):
         parquet_files = list(Path(args.data_dir).glob("*.parquet"))
         
 
-        for file in parquet_files[:1]: 
+        for file in parquet_files[:10]: 
 
             print(file)
 
@@ -140,31 +140,34 @@ def main(args):
             # Save
             ak.to_parquet(codes, args.codes_dir + "/" + file.name)
 
-        
             print("Saved:",  args.codes_dir + "/" + file.name)
 
         
 
     if args.train_tokenizer:
 
-        # DON'T PREPROCESS THE TOKENS
+        # TODO: DEFINE DATALOADERS
+        train_dataset = Tokens(args.codes_dir, "train", nfiles=args.num_files, by_event=True, shuffle_files=True, train_fraction = args.train_fraction)
+        val_dataset = Tokens(args.codes_dir, "val", nfiles=args.num_files, by_event=True, shuffle_files=False, train_fraction = args.train_fraction)
+    
+        train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=Collater(empty_key="token_features", variable_size_keys="all"), num_workers=2)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=Collater(empty_key="token_features", variable_size_keys="all"), num_workers=2)
+
 
         # train the generative model backbone
         model = BackboneNextTokenPredictionLightning(
             optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
             lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
                 model_kwargs={
-                     embedding_dim: args.embedding_dim,
-                          attention_dropout: args.attention_dropout,
-                          vocab_size: args.vocab_size,
-                          max_sequence_len: args.max_sequence_len,
-                          n_GPT_blocks: args.n_GPT_blocks,
-                          n_heads: args.n_heads,
-                          verbosity: args.verbosity,
+                     "embedding_dim": args.embedding_dim,
+                          "attention_dropout": args.attention_dropout,
+                          "vocab_size": args.vocab_size,
+                          "max_sequence_len": args.max_sequence_len,
+                          "n_GPT_blocks": args.n_GPT_blocks,
+                          "n_heads": args.n_heads,
+                          "verbosity": args.verbosity,
                 },
-      
         )
-
 
         """
         model = SSLLightning(
@@ -180,8 +183,6 @@ def main(args):
         """
 
     
-
-
     trainer.fit(model, train_loader, val_loader)
     trainer.test(model, val_loader)
 
@@ -232,6 +233,7 @@ if __name__ == "__main__":
 
     # GPT args
     parser.add_argument("--train_tokenizer", action="store_true", default=False)
+    parser.add_argument("--embedding_dim", type=int, default=256)
     parser.add_argument("--attention_dropout", type=float, default=0.1)
     parser.add_argument("--vocab_size", type=int, default=8194)
     parser.add_argument("--max_sequence_len", type=int, default=128)

@@ -592,7 +592,6 @@ class VQVAELightning(L.LightningModule):
                 for row in range(code.shape[0]):
 
                     row_codes = code[row][mask_batch[row] == 1]
-                   
                     ak_output = ak.concatenate([ak_output, ak.Array([row_codes])], axis = 0)
        
         
