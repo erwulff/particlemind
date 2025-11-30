@@ -4,6 +4,8 @@ import logging
 import time
 from pathlib import Path
 from typing import Tuple
+import awkward as ak
+
 
 import lightning as L
 import matplotlib.pyplot as plt
@@ -547,8 +549,8 @@ class VQVAELightning(L.LightningModule):
 
         self.log("test_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
-    def tokenize_ak_array(self, ak_arr, pp_dict, batch_size=256, pad_length=128, hide_pbar=False):
-        """Tokenize an awkward array of jets.
+    def tokenize_dataloader(self, dataloader, hide_pbar=False, pad_length=15000):
+        """Tokenize a dataloader of calo hit events.
 
         Parameters
         ----------
@@ -569,35 +571,32 @@ class VQVAELightning(L.LightningModule):
             Awkward array of tokens, shape (N_jets, <var>).
         """
 
-        # preprocess the ak_arrary
-        ak_arr = ak_select_and_preprocess(ak_arr, pp_dict=pp_dict)
-        ak_arr_padded, mask = ak_pad(ak_arr, maxlen=pad_length, return_mask=True)
-        # convert to numpy
-        arr = ak_to_np_stack(ak_arr_padded, names=pp_dict.keys())
-        # convert to torch tensor
-        x = torch.from_numpy(arr).float()
-        mask = torch.from_numpy(mask.to_numpy()).float()
-
-        codes = []
-        dataset = TensorDataset(x, mask)
-        dataloader = DataLoader(dataset, batch_size=batch_size)
+        ak_output = ak.Array([])
 
         with torch.no_grad():
             if not hide_pbar:
                 pbar = tqdm(dataloader)
             else:
                 pbar = dataloader
-            for i, (x_batch, mask_batch) in enumerate(pbar):
+            for i, x_batch in enumerate(pbar):
+
                 # move to device
-                x_batch = x_batch.to(self.device)
-                mask_batch = mask_batch.to(self.device)
-                x_particle_reco, vq_out = self.forward(x_batch, mask_batch)
+                features_batch = x_batch["calo_hit_features"].to(self.device)
+                mask_batch = x_batch["calo_hit_mask"].to(self.device)
+                x_particle_reco, vq_out = self.forward(features_batch, mask_batch)
                 code = vq_out["q"]
-                codes.append(code)
-        codes = torch.cat(codes, dim=0).detach().cpu().numpy()
-        mask = mask.detach().cpu().numpy()
-        tokens = np_to_ak(codes, names=["token"], mask=mask)["token"]
-        return tokens
+
+                code = code.squeeze(-1).detach().cpu().numpy()
+                mask_batch = mask_batch.squeeze(-1).detach().cpu().numpy().astype(int)
+
+                for row in range(code.shape[0]):
+
+                    row_codes = code[row][mask_batch[row] == 1]
+                   
+                    ak_output = ak.concatenate([ak_output, ak.Array([row_codes])], axis = 0)
+       
+        
+        return ak_output
 
     def reconstruct_ak_tokens(self, tokens_ak, pp_dict, batch_size=256, pad_length=128, hide_pbar=False):
         """Reconstruct tokenized awkward array.

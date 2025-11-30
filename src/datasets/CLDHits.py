@@ -164,3 +164,84 @@ class CLDHits(IterableDataset):
                             "hit_labels": hit_labels[i : i + 1],  # Shape (1,) or (1, label_dim)
                             "calo_hit_features": calo_hit_features[i : i + 1],  # Shape (1, num_features)
                         }
+
+
+class CLDHitsSingleFile(IterableDataset):
+    def __init__(
+        self, file_path, by_event=True
+    ):
+        """
+        Initialize the dataset by storing the paths to all parquet files in the specified folder.
+
+        Args:
+            folder_path (str or Path): Path to the folder containing parquet files.
+            shuffle_files (bool): Whether to shuffle the order of parquet files.
+        """
+        self.file_path = file_path
+        self.by_event = by_event
+
+    def __iter__(self):
+        logger = logging.getLogger(__name__)
+        self.sample_counter = 0  # Reset sample counter for each iteration or each epoch
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:
+            # Single-process data loading
+            files_to_process = self.parquet_files[: self.nfiles]
+            logger.info(f"Processing {len(files_to_process)} files in single-process mode.")
+
+        else:
+            # Multi-process data loading, split the files among workers
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+            files_to_process = self.parquet_files[worker_id::num_workers]
+            logger.info(f"Processing {len(files_to_process)} files out of {len(self.parquet_files)} total files.")
+
+        data = ak.from_parquet(self.file_path)
+        for event_i in range(len(data["genparticle_to_calo_hit_matrix"])):
+            if self.nsamples is not None:
+                if self.sample_counter >= self.nsamples:
+                    return
+                self.sample_counter += 1
+
+            genparticle_to_calo_hit_matrix = data["genparticle_to_calo_hit_matrix"][event_i]
+            calo_hit_features = data["calo_hit_features"][event_i]
+
+            gen_idx = genparticle_to_calo_hit_matrix["gen_idx"].to_numpy()
+            hit_idx = genparticle_to_calo_hit_matrix["hit_idx"].to_numpy()
+            weights = genparticle_to_calo_hit_matrix["weight"].to_numpy()
+
+            calo_hit_features = np.column_stack(
+                (
+                    calo_hit_features["position.x"].to_numpy(),
+                    calo_hit_features["position.y"].to_numpy(),
+                    calo_hit_features["position.z"].to_numpy(),
+                    calo_hit_features["energy"].to_numpy(),
+                )
+            )
+
+            hit_labels = get_hit_labels(
+                hit_idx, gen_idx, weights
+            )  # This could be moved to the pre-processing step if needed
+
+            if self.by_event:
+                yield {
+                    # "gen_idx": gen_idx,
+                    # "hit_idx": hit_idx,
+                    # "weights": weights,
+                    "hit_labels": hit_labels,
+                    "calo_hit_features": standardize_calo_hit_features(calo_hit_features),
+                }
+
+            else:
+
+                # return one hit at a time instead of one event
+                for i in range(len(calo_hit_features)):
+                    if self.nsamples is not None and self.sample_counter >= self.nsamples:
+                        return
+                    self.sample_counter += 1
+
+                    yield {
+                        "hit_labels": hit_labels[i : i + 1],  # Shape (1,) or (1, label_dim)
+                        "calo_hit_features": calo_hit_features[i : i + 1],  # Shape (1, num_features)
+                    }
+

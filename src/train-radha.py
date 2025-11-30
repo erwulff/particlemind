@@ -12,10 +12,11 @@ from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger, TensorBoardLogger
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 
-from src.datasets.CLDHits import CLDHits
+from src.datasets.CLDHits import CLDHits, CLDHitsSingleFile
 from src.datasets.utils import Collater
-from src.models.vae import VAELightning, SSLLightning
+# from src.models.vae import VAELightning, SSLLightning
 from src.models.vqvae import VQVAELightning
+from src.models.backbone import BackboneNextTokenPredictionLightning
 
 
 @rank_zero_only
@@ -77,9 +78,8 @@ def main(args):
     )
 
     # DATA
-    train_dataset = CLDHits(args.data_dir, "train", nfiles=args.num_files, by_event=True, shuffle_files=True)
-    val_dataset = CLDHits(args.data_dir, "val", nfiles=args.num_files, by_event=True, shuffle_files=False)
-
+    train_dataset = CLDHits(args.data_dir, "train", nfiles=args.num_files, by_event=True, shuffle_files=True, train_fraction = args.train_fraction)
+    val_dataset = CLDHits(args.data_dir, "val", nfiles=args.num_files, by_event=True, shuffle_files=False, train_fraction = args.train_fraction)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, collate_fn=Collater("all"), num_workers=2)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, collate_fn=Collater("all"), num_workers=2)
@@ -112,13 +112,61 @@ def main(args):
             model_type="VQVAENormFormer",
         )
 
-    else:
+    if args.generate_tokenized_dataset:
 
-        #load in pretrained embedder
-        embedder = VQVAELightning.load_from_checkpoint(
-            checkpoint_path="/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=48.ckpt",
-        )
+        from pathlib import Path
+        import awkward as ak
+        import numpy as np
         
+        #load in pretrained embedder
+        embedder = VQVAELightning.load_from_checkpoint(    checkpoint_path="/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=48.ckpt",
+        )
+
+        # TODO clean this up, it shouldn't just be in the main file
+
+        # get the files
+        parquet_files = list(Path(args.data_dir).glob("*.parquet"))
+        
+
+        for file in parquet_files[:1]: 
+
+            print(file)
+
+            file_dataset = CLDHitsSingleFile(file, by_event=True)
+            file_loader = DataLoader(file_dataset, batch_size=args.batch_size, collate_fn=Collater("all"), num_workers=2)
+
+            codes = embedder.tokenize_dataloader(train_loader)
+  
+            # Save
+            ak.to_parquet(codes, args.codes_dir + "/" + file.name)
+
+        
+            print("Saved:",  args.codes_dir + "/" + file.name)
+
+        
+
+    if args.train_tokenizer:
+
+        # DON'T PREPROCESS THE TOKENS
+
+        # train the generative model backbone
+        model = BackboneNextTokenPredictionLightning(
+            optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
+            lr_scheduler_kwargs = {"use_scheduler": True, "warmup_frac": 0.01},
+                model_kwargs={
+                     embedding_dim: args.embedding_dim,
+                          attention_dropout: args.attention_dropout,
+                          vocab_size: args.vocab_size,
+                          max_sequence_len: args.max_sequence_len,
+                          n_GPT_blocks: args.n_GPT_blocks,
+                          n_heads: args.n_heads,
+                          verbosity: args.verbosity,
+                },
+      
+        )
+
+
+        """
         model = SSLLightning(
             embedding_model = embedder.model,
             optimizer_kwargs={"lr": args.learning_rate, "weight_decay": args.weight_decay},
@@ -129,6 +177,7 @@ def main(args):
                 "nodes":[16, 64, 64, 64],
                }
                      )
+        """
 
     
 
@@ -152,17 +201,21 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles"
     )
+    parser.add_argument(
+        "--codes_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/codes/p8_ee_tt_ecm365_parquetfiles"
+    )
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--accumulate_grad_batches", type=int, default=128)
-    parser.add_argument("--num_files", type=int, default=30)
+    parser.add_argument("--num_files", type=int, default=3)
+    parser.add_argument("--train_fraction", type=float, default=0.95)
 
     # TRAINER ARGS
     parser.add_argument("--max_epochs", type=int, default=50)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-2)
-    parser.add_argument("--train_embedder", action="store_true", default=False) # else train projector
 
-    # MODEL args
+    # VQVAE args
+    parser.add_argument("--train_embedder", action="store_true", default=False)
     parser.add_argument("--hidden_dim", type=int, default=128)
     parser.add_argument("--latent_dim", type=int, default=16)
     parser.add_argument("--num_blocks", type=int, default=2)
@@ -175,5 +228,16 @@ if __name__ == "__main__":
     parser.add_argument("--sync_nu", type=int, default=2)
     parser.add_argument("--replace_freq", type=int, default=20)
 
+    parser.add_argument("--generate_tokenized_dataset", action="store_true", default=False)
+
+    # GPT args
+    parser.add_argument("--train_tokenizer", action="store_true", default=False)
+    parser.add_argument("--attention_dropout", type=float, default=0.1)
+    parser.add_argument("--vocab_size", type=int, default=8194)
+    parser.add_argument("--max_sequence_len", type=int, default=128)
+    parser.add_argument("--n_GPT_blocks", type=int, default=3)
+    parser.add_argument("--n_heads", type=int, default=8)
+    parser.add_argument("--verbosity", type=bool, default=False)
+                    
     args = parser.parse_args()
     main(args)
