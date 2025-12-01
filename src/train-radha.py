@@ -46,9 +46,17 @@ def main(args):
             print(configs)
             filename = f"tokenizer_{args.name}_val_loss_" + "{epoch:02d}"
 
+    elif args.generate_samples:
+        with open(f"configs/{args.config_tokenizer}.yaml", "r") as file:
+            configs = yaml.safe_load(file)
+            print(configs)
+
     seed_everything(0)
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = configs["trainer_kwargs"]["visible_devices"]
     os.environ["WANDB_CACHE_DIR"] = "/pscratch/sd/r/rmastand/"
+
+    #torch.set_float32_matmul_precision("medium")
+
 
 
     if not args.generate_tokenized_dataset:
@@ -78,7 +86,7 @@ def main(args):
     
         trainer = Trainer(
             logger=logger,
-            devices=configs["trainer_kwargs"]["devices"],
+            devices=len(configs["trainer_kwargs"]["visible_devices"].split(",")),
             accelerator="cuda",
             strategy="ddp_find_unused_parameters_true",
             accumulate_grad_batches=configs["trainer_kwargs"]["accumulate_grad_batches"],
@@ -94,7 +102,7 @@ def main(args):
         )
 
      # MODEL
-    if args.train_embedder:
+    elif args.train_embedder:
 
         # DATA
         train_dataset = CLDHits(
@@ -135,7 +143,10 @@ def main(args):
             model_type="VQVAENormFormer",
         )
 
-    if args.generate_tokenized_dataset:
+        trainer.fit(model, train_loader, val_loader)
+        trainer.test(model, val_loader)
+
+    elif args.generate_tokenized_dataset:
 
         from pathlib import Path
 
@@ -152,9 +163,9 @@ def main(args):
         # get the files
         parquet_files = list(Path(configs["data_kwargs"]["data_dir"]).glob("*.parquet"))
 
-        for file in parquet_files[:configs["data_kwargs"]["num_files"]]:
+        for file in parquet_files[configs["data_kwargs"]["start_files"]:configs["data_kwargs"]["stop_files"]]:
 
-            print(file)
+            print("Analyzing file", file.name)
 
             file_dataset = CLDHitsSingleFile(file, by_event=True)
             file_loader = DataLoader(
@@ -169,9 +180,9 @@ def main(args):
             # Save
             ak.to_parquet(codes, args.codes_dir + "/" + file.name)
 
-            print("Saved:", args.codes_dir + "/" + file.name)
+            print("Saved out to", args.codes_dir + "/" + file.name)
 
-    if args.train_tokenizer:
+    elif args.train_tokenizer:
         # TODO: DEFINE DATALOADERS
         train_dataset = Tokens(
             configs["data_kwargs"]["data_dir"],
@@ -210,8 +221,33 @@ def main(args):
             model_kwargs=configs["model_kwargs"],
         )
 
-    trainer.fit(model, train_loader, val_loader)
-    trainer.test(model, val_loader)
+        trainer.fit(model, train_loader, val_loader)
+        trainer.test(model, val_loader)
+
+    elif args.generate_samples:
+
+        # load in pretrained tokenizer
+        tokenizer = BackboneNextTokenPredictionLightning.load_from_checkpoint(
+            checkpoint_path=configs["model_kwargs"]["tokenizer_checkpoint_path"],
+        )
+
+        # load in pretrained embedder
+        embedder = VQVAELightning.load_from_checkpoint(
+            checkpoint_path=configs["model_kwargs"]["checkpoint_path"],
+        )
+
+        samples_token = tokenizer.generate_n_jets_batched(configs["data_kwargs"]["n_events"], configs["data_kwargs"]["batch_size"])
+        # PRINT, CHECK IF START, STOP TOKCNES ARE THERE
+        print(samples_token)
+        # save tokens as well
+        exit()
+
+        samples_x = embedder.reconstruct_ak_tokens(samples_token, pp_dict, batch_size=configs["data_kwargs"]["n_events"], pad_length=128, hide_pbar=False):
+
+        # TODO REVERSE PREPROCESS
+        # save out
+
+    
 
 
 if __name__ == "__main__":
@@ -242,6 +278,12 @@ if __name__ == "__main__":
     # GPT args
     parser.add_argument("--train_tokenizer", action="store_true", default=False)
     parser.add_argument("--config_gpt", type=str, default="gpt")
+
+    parser.add_argument(
+        "--generate_samples", action="store_true", default=False
+    )
+    parser.add_argument("--config_generation", type=str, default="generate_samples")
+    
 
     args = parser.parse_args()
     main(args)

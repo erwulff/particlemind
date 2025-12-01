@@ -682,6 +682,8 @@ class VQVAELightning(L.LightningModule):
 
         return x_reco_ak
 
+
+        
     """
     def on_validation_epoch_end(self) -> None:
         # Lightning hook that is called when a validation epoch ends.

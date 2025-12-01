@@ -1,0 +1,8 @@
+data_kwargs:
+  n_events: 10
+  batch_size: 2
+
+model_kwargs:
+  tokenizer_checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=48.ckpt"
+  embedder_checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=48.ckpt"
+
