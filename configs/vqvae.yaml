@@ -3,8 +3,8 @@ trainer_kwargs:
   accumulate_grad_batches: 128
   max_epochs: 40
   precision: 16-mixed
-  limit_train_batches: 4000
-  limit_val_batches: 800
+  limit_train_batches: 40
+  limit_val_batches: 8
 
 
 data_kwargs:

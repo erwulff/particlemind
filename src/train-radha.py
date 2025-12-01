@@ -102,7 +102,7 @@ def main(args):
         )
 
      # MODEL
-    elif args.train_embedder:
+    if args.train_embedder:
 
         # DATA
         train_dataset = CLDHits(
@@ -146,7 +146,7 @@ def main(args):
         trainer.fit(model, train_loader, val_loader)
         trainer.test(model, val_loader)
 
-    elif args.generate_tokenized_dataset:
+    if args.generate_tokenized_dataset:
 
         from pathlib import Path
 
@@ -182,7 +182,7 @@ def main(args):
 
             print("Saved out to", args.codes_dir + "/" + file.name)
 
-    elif args.train_tokenizer:
+    if args.train_tokenizer:
         # TODO: DEFINE DATALOADERS
         train_dataset = Tokens(
             configs["data_kwargs"]["data_dir"],
@@ -224,7 +224,7 @@ def main(args):
         trainer.fit(model, train_loader, val_loader)
         trainer.test(model, val_loader)
 
-    elif args.generate_samples:
+    if args.generate_samples:
 
         # load in pretrained tokenizer
         tokenizer = BackboneNextTokenPredictionLightning.load_from_checkpoint(
@@ -242,7 +242,9 @@ def main(args):
         # save tokens as well
         exit()
 
-        samples_x = embedder.reconstruct_ak_tokens(samples_token, pp_dict, batch_size=configs["data_kwargs"]["n_events"], pad_length=128, hide_pbar=False):
+        # remove start, stop tokens
+
+        samples_x = embedder.reconstruct_ak_tokens(samples_token, pp_dict, batch_size=configs["data_kwargs"]["n_events"], pad_length=128, hide_pbar=False)
 
         # TODO REVERSE PREPROCESS
         # save out

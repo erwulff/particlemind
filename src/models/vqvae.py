@@ -942,9 +942,10 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
         hit_clusters_true.append(np.sum(event_samples_E[mask]))
         hit_clusters_reco.append(np.sum(reco_samples_E[mask]))
 
-    ax.hist(np.array(hit_clusters_true) - np.array(hit_clusters_reco), bins=50, density=True, histtype="step", linewidth=2)
-    ax.set_xlabel(  "$E_{true} - E_{reco}$ per cluster")
+    ax.hist((np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true), bins=50, density=True, histtype="step", linewidth=2)
+    ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{reco}$ per cluster")
     ax.set_ylabel("Density")
+    ax.set_yscale("log")
     #ax.legend(loc="upper right")
 
 
