@@ -551,7 +551,7 @@ class VQVAELightning(L.LightningModule):
 
         self.log("test_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
-    def tokenize_dataloader(self, dataloader, hide_pbar=False, pad_length=15000):
+    def tokenize_dataloader(self, dataloader, hide_pbar=False, pad_length=15000, add_start_end_tokens=False):
         """Tokenize a dataloader of calo hit events.
 
         Parameters
@@ -575,6 +575,7 @@ class VQVAELightning(L.LightningModule):
 
         ak_output = ak.Array([])
 
+
         with torch.no_grad():
             if not hide_pbar:
                 pbar = tqdm(dataloader)
@@ -594,6 +595,11 @@ class VQVAELightning(L.LightningModule):
                 for row in range(code.shape[0]):
 
                     row_codes = code[row][mask_batch[row] == 1]
+                    if add_start_end_tokens:
+                        
+                        n_tokens = self.model.vqlayer.num_codes
+                        row_codes = np.concatenate([[0], row_codes + 1, [n_tokens + 1]])
+                                            
                     ak_output = ak.concatenate([ak_output, ak.Array([row_codes])], axis = 0)
        
         

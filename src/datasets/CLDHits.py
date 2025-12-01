@@ -182,6 +182,7 @@ class CLDHitsSingleFile(IterableDataset):
 
     def __iter__(self):
         logger = logging.getLogger(__name__)
+        """
         self.sample_counter = 0  # Reset sample counter for each iteration or each epoch
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
@@ -195,13 +196,16 @@ class CLDHitsSingleFile(IterableDataset):
             num_workers = worker_info.num_workers
             files_to_process = self.parquet_files[worker_id::num_workers]
             logger.info(f"Processing {len(files_to_process)} files out of {len(self.parquet_files)} total files.")
+        """
 
         data = ak.from_parquet(self.file_path)
         for event_i in range(len(data["genparticle_to_calo_hit_matrix"])):
+            """
             if self.nsamples is not None:
                 if self.sample_counter >= self.nsamples:
                     return
                 self.sample_counter += 1
+            """
 
             genparticle_to_calo_hit_matrix = data["genparticle_to_calo_hit_matrix"][event_i]
             calo_hit_features = data["calo_hit_features"][event_i]

@@ -32,93 +32,102 @@ def main(args):
         with open(f"configs/{args.config_embedder}.yaml", "r") as file:
             configs = yaml.safe_load(file)
             print(configs)
+            filename = f"embedder_{args.name}_val_loss_" + "{epoch:02d}"
+
+    elif args.generate_tokenized_dataset:
+        with open(f"configs/{args.config_tokenizer}.yaml", "r") as file:
+            configs = yaml.safe_load(file)
+            print(configs)
 
     elif args.train_tokenizer:
         project = "tokenizer_training"
         with open(f"configs/{args.config_gpt}.yaml", "r") as file:
             configs = yaml.safe_load(file)
             print(configs)
+            filename = f"tokenizer_{args.name}_val_loss_" + "{epoch:02d}"
 
     seed_everything(0)
     os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
     os.environ["WANDB_CACHE_DIR"] = "/pscratch/sd/r/rmastand/"
 
-    if args.logger == "wandb":
-        logger = WandbLogger(
-            name=args.name,
-            project=project,
-            save_dir=f"{args.save_dir}/{project}/",
-            log_model="all",
+
+    if not args.generate_tokenized_dataset:
+
+        if args.logger == "wandb":
+            logger = WandbLogger(
+                name=args.name,
+                project=project,
+                save_dir=f"{args.save_dir}/{project}/",
+                log_model="all",
+            )
+            log_config(logger, args)
+        elif args.logger == "tensorboard":
+            logger = TensorBoardLogger(args.data_dir, name=args.name)
+    
+            
+        lr_monitor = LearningRateMonitor(logging_interval="step")
+        checkpoint_loss = ModelCheckpoint(
+            dirpath=f"{args.save_dir}/{project}/best_models/",
+            filename=filename,
+            monitor="val_loss_epoch",
+            mode="min",
+            verbose=1,
+            auto_insert_metric_name=True,
         )
-        log_config(logger, args)
-    elif args.logger == "tensorboard":
-        logger = TensorBoardLogger(args.data_dir, name=args.name)
+        callbacks = [checkpoint_loss, lr_monitor]
+    
+        trainer = Trainer(
+            logger=logger,
+            devices=configs["trainer_kwargs"]["devices"],
+            accelerator="cuda",
+            strategy="ddp_find_unused_parameters_true",
+            accumulate_grad_batches=configs["trainer_kwargs"]["accumulate_grad_batches"],
+            deterministic=True,
+            enable_model_summary=True,
+            log_every_n_steps=1,
+            max_epochs=configs["trainer_kwargs"]["max_epochs"],
+            callbacks=callbacks,
+            precision=configs["trainer_kwargs"]["precision"],
+            default_root_dir=f"{args.save_dir}/{project}/",
+            limit_train_batches=configs["trainer_kwargs"]["limit_train_batches"],
+            limit_val_batches=configs["trainer_kwargs"]["limit_val_batches"],
+        )
 
+     # MODEL
     if args.train_embedder:
-        filename = f"embedder_{args.name}_val_loss_" + "{epoch:02d}"
-    elif args.train_tokenizer:
-        filename = f"tokenizer_{args.name}_val_loss_" + "{epoch:02d}"
-    lr_monitor = LearningRateMonitor(logging_interval="step")
-    checkpoint_loss = ModelCheckpoint(
-        dirpath=f"{args.save_dir}/{project}/best_models/",
-        filename=filename,
-        monitor="val_loss_epoch",
-        mode="min",
-        verbose=1,
-        auto_insert_metric_name=True,
-    )
-    callbacks = [checkpoint_loss, lr_monitor]
 
-    trainer = Trainer(
-        logger=logger,
-        devices=configs["trainer_kwargs"]["devices"],
-        accelerator="cuda",
-        strategy="ddp_find_unused_parameters_true",
-        accumulate_grad_batches=configs["trainer_kwargs"]["accumulate_grad_batches"],
-        deterministic=True,
-        enable_model_summary=True,
-        log_every_n_steps=1,
-        max_epochs=configs["trainer_kwargs"]["max_epochs"],
-        callbacks=callbacks,
-        precision=configs["trainer_kwargs"]["precision"],
-        default_root_dir=f"{args.save_dir}/{project}/",
-        limit_train_batches=configs["trainer_kwargs"]["limit_train_batches"],
-        limit_val_batches=configs["trainer_kwargs"]["limit_val_batches"],
-    )
+        # DATA
+        train_dataset = CLDHits(
+            configs["data_kwargs"]["data_dir"],
+            "train",
+            nfiles=configs["data_kwargs"]["num_files"],
+            by_event=True,
+            shuffle_files=True,
+            train_fraction=configs["data_kwargs"]["train_fraction"],
+        )
+        val_dataset = CLDHits(
+            configs["data_kwargs"]["data_dir"],
+            "val",
+            nfiles=configs["data_kwargs"]["num_files"],
+            by_event=True,
+            shuffle_files=False,
+            train_fraction=configs["data_kwargs"]["train_fraction"],
+        )
+    
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=configs["data_kwargs"]["batch_size"],
+            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all"),
+            num_workers=2,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=configs["data_kwargs"]["batch_size"],
+            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all"),
+            num_workers=2,
+        )
 
-    # DATA
-    train_dataset = CLDHits(
-        configs["data_kwargs"]["data_dir"],
-        "train",
-        nfiles=configs["data_kwargs"]["num_files"],
-        by_event=True,
-        shuffle_files=True,
-        train_fraction=configs["data_kwargs"]["train_fraction"],
-    )
-    val_dataset = CLDHits(
-        configs["data_kwargs"]["data_dir"],
-        "val",
-        nfiles=configs["data_kwargs"]["num_files"],
-        by_event=True,
-        shuffle_files=False,
-        train_fraction=configs["data_kwargs"]["train_fraction"],
-    )
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=configs["data_kwargs"]["batch_size"],
-        collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all"),
-        num_workers=2,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=configs["data_kwargs"]["batch_size"],
-        collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all"),
-        num_workers=2,
-    )
-
-    # MODEL
-    if args.train_embedder:
+   
         model = VQVAELightning(
             optimizer_kwargs=configs["optimizer_kwargs"],
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
@@ -135,7 +144,7 @@ def main(args):
 
         # load in pretrained embedder
         embedder = VQVAELightning.load_from_checkpoint(
-            checkpoint_path=configs["model_kwargs"]["checkpoint_point"],
+            checkpoint_path=configs["model_kwargs"]["checkpoint_path"],
         )
 
         # TODO clean this up, it shouldn't just be in the main file
@@ -155,7 +164,7 @@ def main(args):
                 num_workers=2,
             )
 
-            codes = embedder.tokenize_dataloader(file_loader)
+            codes = embedder.tokenize_dataloader(file_loader, add_start_end_tokens=True)
 
             # Save
             ak.to_parquet(codes, args.codes_dir + "/" + file.name)
@@ -228,6 +237,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--generate_tokenized_dataset", action="store_true", default=False
     )
+    parser.add_argument("--config_tokenizer", type=str, default="tokenize_dataset")
 
     # GPT args
     parser.add_argument("--train_tokenizer", action="store_true", default=False)
