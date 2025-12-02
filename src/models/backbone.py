@@ -174,7 +174,7 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
         device = next(self.module.parameters()).device  # get the device of the model
         idx = torch.zeros(batch_size, 1).long().to(device)
 
-        for i in range(self.module.max_sequence_len):
+        for i in tqdm(range(self.module.max_sequence_len)):
             # get the predictions for the next token
             logits = self(idx)
             print("Logit shape input for generation: ", logits.shape) if self.verbose else None
@@ -198,23 +198,28 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
         gen_batch_until_stop = []
 
         # loop over the jets in the batch, and only keep the tokens until the stop token
-        for jet in gen_batch_ak:
-            stop_token_position = np.where(jet == self.module.vocab_size - 1)
+        for event in gen_batch_ak:
+            stop_token_position = np.where(event == self.module.vocab_size - 1)
             if len(stop_token_position[0]) > 0:
                 stop_token_position = stop_token_position[0][0]
             else:
-                stop_token_position = jet.shape[0]
-            gen_batch_until_stop.append(jet[:stop_token_position])
+                stop_token_position = event.shape[0]
+
+
+            # manually add the stop token for data compatibility
+            gen_batch_until_stop.append(ak.concatenate([event[:stop_token_position], np.array([self.module.vocab_size - 1])], axis = 0))
 
         return ak.Array(gen_batch_until_stop)
 
-    def generate_n_jets_batched(self, n_jets, batch_size, saveas=None):
-        """Generate jets in batches.
+      
+
+    def generate_n_events_batched(self, n_events, batch_size, saveas=None):
+        """Generate events in batches.
 
         Parameters
         ----------
-        n_jets : int
-            Number of jets to generate.
+        n_events : int
+            Number of events to generate.
         batch_size : int
             Batch size to use during generation (use as large as possible with memory.)
         saveas : str, optional
@@ -223,25 +228,26 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
         Returns
         -------
         ak.Array
-            The generated jets (i.e. their token ids, in the shape (n_jets, <var>).
+            The generated events (i.e. their token ids, in the shape (n_jets, <var>).
         """
-        n_batches = n_jets // batch_size + 1
-        generated_jets = []
+        n_batches = n_events // batch_size #+ 1
+        generated_events = []
 
-        print(f"Generating {n_jets} jets in {n_batches} batches of size {batch_size}")
+        print(f"Generating {n_events} events in {n_batches} batches of size {batch_size}")
 
         for i in tqdm(range(n_batches)):
             gen_batch_ak = self.generate_batch(batch_size)
-            generated_jets.append(gen_batch_ak)
+            generated_events.append(gen_batch_ak)
 
         # concatenate the generated batches
-        generated_jets = ak.concatenate(generated_jets)[:n_jets]
+        generated_events = ak.concatenate(generated_events)[:n_events]
+
 
         if saveas is not None:
             print(f"Saving generated jets to {saveas}")
             ak.to_parquet(generated_jets, saveas)
 
-        return generated_jets
+        return generated_events
 
     def training_step(self, batch, batch_idx: int) -> torch.Tensor:
         """Perform a single training step on a batch of data from the training set."""

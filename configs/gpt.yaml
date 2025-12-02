@@ -3,13 +3,12 @@ trainer_kwargs:
   accumulate_grad_batches: 128
   max_epochs: 40
   precision: 16
-  limit_train_batches: 4000
-  limit_val_batches: 800
+  limit_train_batches: 2000
+  limit_val_batches: 500
 
 
 data_kwargs:
   data_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/p8_ee_tt_ecm365_parquetfiles"
-  num_files: 50
   train_fraction: 0.8
   batch_size: 2
 
@@ -17,7 +16,7 @@ model_kwargs:
   embedding_dim: 256
   attention_dropout: 0.1
   vocab_size: 514
-  max_sequence_len: 2048
+  max_sequence_len: 8192
   n_GPT_blocks: 3
   n_heads: 8
   verbosity: True

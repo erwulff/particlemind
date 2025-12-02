@@ -608,7 +608,7 @@ class VQVAELightning(L.LightningModule):
         
         return ak_output
 
-    def reconstruct_ak_tokens(self, tokens_ak, pp_dict, batch_size=256, pad_length=128, hide_pbar=False):
+    def reconstruct_ak_tokens(self, tokens_dataloader, hide_pbar=False):
         """Reconstruct tokenized awkward array.
 
         Parameters
@@ -632,15 +632,11 @@ class VQVAELightning(L.LightningModule):
 
         self.model.eval()
 
-        tokens, mask = ak_pad(tokens_ak, maxlen=pad_length, return_mask=True)
-        tokens = torch.from_numpy(tokens.to_numpy()).long()
-        mask = torch.from_numpy(mask.to_numpy()).float()
 
-        x_reco = []
-        dataset = TensorDataset(tokens, mask)
-        dataloader = DataLoader(dataset, batch_size=batch_size)
+        x_reco = ak.Array([])
 
         codebook = self.model.vqlayer.codebook.weight
+
 
         # if the codebook has an affine transform, apply it
         # before using it to reconstruct the data
@@ -649,22 +645,23 @@ class VQVAELightning(L.LightningModule):
             codebook = self.model.vqlayer.affine_transform(codebook)
 
         last_batch = None
+
         with torch.no_grad():
             if not hide_pbar:
-                pbar = tqdm(dataloader)
+                pbar = tqdm(tokens_dataloader)
             else:
-                pbar = dataloader
-            for i, (tokens_batch, mask_batch) in enumerate(pbar):
+                pbar = tokens_dataloader
+            for i, (batch) in enumerate(pbar):
                 # move to device
-                tokens_batch = tokens_batch.to(self.device)
-                mask_batch = mask_batch.to(self.device)
-                try:
-                    z_q = F.embedding(tokens_batch, codebook)
-                except Exception as e:  # noqa: E722
-                    print(f"Error in embedding: {e}")
-                    print("batch shape", tokens_batch.shape)
-                    print("batch max", tokens_batch.max())
-                    print("batch min", tokens_batch.min())
+                tokens_batch = batch["token_features"].to(self.device).int().squeeze(2) # extra dimension for collater
+                mask_batch = batch["mask"].to(self.device) # shape: batch_size, num_tokens / hits
+                #try:
+                z_q = F.embedding(tokens_batch, codebook) # shape: batch_size, num_tokens, d_latent_space
+                #except Exception as e:  # noqa: E722
+                 #   print(f"Error in embedding: {e}")
+                 #   print("batch shape", tokens_batch.shape)
+                 #   print("batch max", tokens_batch.max())
+                  #  print("batch min", tokens_batch.min())
 
                 if last_batch is not None:
                     break
@@ -677,13 +674,11 @@ class VQVAELightning(L.LightningModule):
                     x_reco_batch = self.model.decoder(z_q)
                 else:
                     raise ValueError("Unknown model structure. Cannot reconstruct.")
-                x_reco.append(x_reco_batch)
 
-        x_reco = torch.cat(x_reco, dim=0).detach().cpu().numpy()
-        x_reco_ak = np_to_ak(x_reco, names=pp_dict.keys(), mask=mask.detach().cpu().numpy())
-        x_reco_ak = ak_select_and_preprocess(x_reco_ak, pp_dict, inverse=True)
+                x_reco = ak.concatenate([x_reco, x_reco_batch.detach().cpu().numpy()], axis = 0)
 
-        return x_reco_ak
+    
+        return x_reco
 
 
         

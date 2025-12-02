@@ -1,8 +1,11 @@
 data_kwargs:
-  n_events: 10
-  batch_size: 2
+  n_events_per_file: 10
+  n_files: 5
+  batch_size: 4
+  tokens_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/generated_parquetfiles"
+  data_dir: "/pscratch/sd/r/rmastand/particlemind/data/generated_parquetfiles"
 
 model_kwargs:
-  tokenizer_checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=48.ckpt"
-  embedder_checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=48.ckpt"
+  gpt_checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/gpt_training/best_models/gpt_test_val_loss_epoch=36.ckpt"
+  embedder_checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=27.ckpt"
 

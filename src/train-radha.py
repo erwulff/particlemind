@@ -1,8 +1,13 @@
+import awkward as ak
+import numpy as np
+
 import os
 from argparse import ArgumentParser
 
 import torch
 import yaml
+
+from pathlib import Path
 
 torch.cuda.empty_cache()
 from lightning import Trainer, seed_everything
@@ -10,7 +15,7 @@ from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 from src.datasets.CLDHits import CLDHits, CLDHitsSingleFile
-from src.datasets.Tokens import Tokens
+from src.datasets.Tokens import Tokens, TokensSingleFile
 from src.datasets.utils import Collater
 from src.models.backbone import BackboneNextTokenPredictionLightning
 
@@ -18,6 +23,9 @@ from src.models.backbone import BackboneNextTokenPredictionLightning
 from src.models.vqvae import VQVAELightning
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
+
+
+
 
 
 @rank_zero_only
@@ -39,15 +47,15 @@ def main(args):
             configs = yaml.safe_load(file)
             print(configs)
 
-    elif args.train_tokenizer:
-        project = "tokenizer_training"
+    elif args.train_backbone:
+        project = "gpt_training"
         with open(f"configs/{args.config_gpt}.yaml", "r") as file:
             configs = yaml.safe_load(file)
             print(configs)
-            filename = f"tokenizer_{args.name}_val_loss_" + "{epoch:02d}"
+            filename = f"gpt_{args.name}_val_loss_" + "{epoch:02d}"
 
-    elif args.generate_samples:
-        with open(f"configs/{args.config_tokenizer}.yaml", "r") as file:
+    elif (args.generate_samples_tokens or args.generate_samples_events):
+        with open(f"configs/{args.config_generation}.yaml", "r") as file:
             configs = yaml.safe_load(file)
             print(configs)
 
@@ -55,7 +63,7 @@ def main(args):
 
 
 
-    if not args.generate_tokenized_dataset:
+    if not (args.generate_tokenized_dataset or args.generate_samples_tokens or args.generate_samples_events):
 
         seed_everything(0)
         os.environ["CUDA_VISIBLE_DEVICES"] = configs["trainer_kwargs"]["visible_devices"]
@@ -103,6 +111,9 @@ def main(args):
             limit_val_batches=configs["trainer_kwargs"]["limit_val_batches"],
         )
 
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
      # MODEL
     if args.train_embedder:
 
@@ -110,7 +121,7 @@ def main(args):
         train_dataset = CLDHits(
             configs["data_kwargs"]["data_dir"],
             "train",
-            nfiles=configs["data_kwargs"]["num_files"],
+            #nfiles=configs["data_kwargs"]["num_files"],
             by_event=True,
             shuffle_files=True,
             train_fraction=configs["data_kwargs"]["train_fraction"],
@@ -118,7 +129,7 @@ def main(args):
         val_dataset = CLDHits(
             configs["data_kwargs"]["data_dir"],
             "val",
-            nfiles=configs["data_kwargs"]["num_files"],
+            #nfiles=configs["data_kwargs"]["num_files"],
             by_event=True,
             shuffle_files=False,
             train_fraction=configs["data_kwargs"]["train_fraction"],
@@ -150,26 +161,20 @@ def main(args):
 
     if args.generate_tokenized_dataset:
 
-        from pathlib import Path
-
-        import awkward as ak
-        import numpy as np
-
+        
         # load in pretrained embedder
         embedder = VQVAELightning.load_from_checkpoint(
             checkpoint_path=configs["model_kwargs"]["checkpoint_path"],
         )
 
-        # TODO clean this up, it shouldn't just be in the main file
 
         # get the files
         parquet_files = list(Path(configs["data_kwargs"]["data_dir"]).glob("*.parquet"))
 
         for i, file in enumerate(parquet_files[configs["data_kwargs"]["start_files"]:configs["data_kwargs"]["stop_files"]]):
 
-            
-            print("Analyzing file", file.name, f"(file {i})")
 
+            print("Analyzing file", file.name, f"(file {i})")
             file_dataset = CLDHitsSingleFile(file, by_event=True)
 
             file_loader = DataLoader(
@@ -178,20 +183,18 @@ def main(args):
                 collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all"),
                 num_workers=0, # must be zero otherwise events are duplicated
             )
-
             codes = embedder.tokenize_dataloader(file_loader, add_start_end_tokens=True)
 
             # Save
             ak.to_parquet(codes, configs["data_kwargs"]["tokens_dir"] + "/" + file.name)
-
             print("Saved out to", configs["data_kwargs"]["tokens_dir"] + "/" + file.name)
 
-    if args.train_tokenizer:
+    if args.train_backbone:
         # TODO: DEFINE DATALOADERS
         train_dataset = Tokens(
             configs["data_kwargs"]["data_dir"],
             "train",
-            nfiles=configs["data_kwargs"]["num_files"],
+            #nfiles=configs["data_kwargs"]["num_files"],
             by_event=True,
             shuffle_files=True,
             train_fraction=configs["data_kwargs"]["train_fraction"],
@@ -199,7 +202,7 @@ def main(args):
         val_dataset = Tokens(
             configs["data_kwargs"]["data_dir"],
             "val",
-            nfilesconfigs["data_kwargs"]["num_files"],
+            #nfiles=configs["data_kwargs"]["num_files"],
             by_event=True,
             shuffle_files=False,
             train_fraction=configs["data_kwargs"]["train_fraction"],
@@ -218,6 +221,7 @@ def main(args):
             num_workers=2,
         )
 
+
         # train the generative model backbone
         model = BackboneNextTokenPredictionLightning(
             optimizer_kwargs=configs["optimizer_kwargs"],
@@ -228,31 +232,48 @@ def main(args):
         trainer.fit(model, train_loader, val_loader)
         #trainer.test(model, val_loader)
 
-    if args.generate_samples:
+    if args.generate_samples_tokens:
 
-        # load in pretrained tokenizer
-        tokenizer = BackboneNextTokenPredictionLightning.load_from_checkpoint(
-            checkpoint_path=configs["model_kwargs"]["tokenizer_checkpoint_path"],
+        # load in pretrained gpt_backbone
+        gpt_backbone = BackboneNextTokenPredictionLightning.load_from_checkpoint(
+            checkpoint_path=configs["model_kwargs"]["gpt_checkpoint_path"],
         )
 
-        # load in pretrained embedder
+        for file_id in range(configs["data_kwargs"]["n_files"]):
+            print(f"On file {file_id} of {configs["data_kwargs"]["n_files"]}...")
+            samples_tokens = gpt_backbone.generate_n_events_batched(configs["data_kwargs"]["n_events_per_file"], configs["data_kwargs"]["batch_size"])
+            ak.to_parquet(samples_tokens, configs["data_kwargs"]["tokens_dir"] + "/" + f"generated_{file_id}.parquet")
+        print("Done generating tokens!")
+
+    if args.generate_samples_events:
+
+               # load in pretrained embedder
         embedder = VQVAELightning.load_from_checkpoint(
-            checkpoint_path=configs["model_kwargs"]["checkpoint_path"],
+            checkpoint_path=configs["model_kwargs"]["embedder_checkpoint_path"],
         )
 
-        samples_token = tokenizer.generate_n_jets_batched(configs["data_kwargs"]["n_events"], configs["data_kwargs"]["batch_size"])
-        # PRINT, CHECK IF START, STOP TOKCNES ARE THERE
-        print(samples_token)
-        # save tokens as well
-        exit()
+        for file_id in range(configs["data_kwargs"]["n_files"]):
+            print(f"On file {file_id} of {configs["data_kwargs"]["n_files"]}...")
 
-        # remove start, stop tokens
+            tokens_dataset = TokensSingleFile(
+                configs["data_kwargs"]["tokens_dir"] + "/" + f"generated_{file_id}.parquet",
+                by_event=True,
+                remove_start_stop_tokens=True,
+            )
+           
+            tokens_loader = DataLoader(
+                tokens_dataset,
+                batch_size=configs["data_kwargs"]["batch_size"],
+                collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
+                num_workers=0,
+            )
 
-        samples_x = embedder.reconstruct_ak_tokens(samples_token, pp_dict, batch_size=configs["data_kwargs"]["n_events"], pad_length=128, hide_pbar=False)
+            samples_events = embedder.reconstruct_ak_tokens(tokens_loader, hide_pbar=False)
+            ak.to_parquet(samples_events, configs["data_kwargs"]["data_dir"] + "/" + f"generated_{file_id}.parquet")
 
-        # TODO REVERSE PREPROCESS
-        # save out
+        print("Done generating samples!")
 
+      
     
 
 
@@ -282,11 +303,14 @@ if __name__ == "__main__":
     parser.add_argument("--config_tokenizer", type=str, default="tokenize_dataset")
 
     # GPT args
-    parser.add_argument("--train_tokenizer", action="store_true", default=False)
+    parser.add_argument("--train_backbone", action="store_true", default=False)
     parser.add_argument("--config_gpt", type=str, default="gpt")
 
     parser.add_argument(
-        "--generate_samples", action="store_true", default=False
+        "--generate_samples_tokens", action="store_true", default=False
+    )
+    parser.add_argument(
+        "--generate_samples_events", action="store_true", default=False
     )
     parser.add_argument("--config_generation", type=str, default="generate_samples")
     
