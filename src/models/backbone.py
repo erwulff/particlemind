@@ -127,9 +127,9 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
 
         X = batch["token_features"]
 
-        # hack for how
+        # hack for now
         #X[:,self.module.max_sequence_len-1,1] = 513
-#
+
         X = X.squeeze().long()
         input = X[:, :self.module.max_sequence_len, 0] # NEW
         targets = X[:, :self.module.max_sequence_len, 1] # NEW
@@ -230,7 +230,7 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
         ak.Array
             The generated events (i.e. their token ids, in the shape (n_jets, <var>).
         """
-        n_batches = n_events // batch_size #+ 1
+        n_batches = int(np.ceil(float(n_events) / batch_size))
         generated_events = []
 
         print(f"Generating {n_events} events in {n_batches} batches of size {batch_size}")
