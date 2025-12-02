@@ -941,12 +941,12 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     
     for event_i, labels_event_i in enumerate(labels_event):
         for unique_label_event_i in unique_labels[event_i]:
-            mask_event_i = labels_event_i == unique_label_event_i
-            hit_clusters_true.append(np.sum(event_samples_E[event_i][mask_event_i]))
-            hit_clusters_reco.append(np.sum(reco_samples_E[event_i][mask_event_i]))
+            mask_event_i_label_i = labels_event_i == unique_label_event_i
+            hit_clusters_true.append(np.sum(event_samples_E[event_i][mask_event_i_label_i]))
+            hit_clusters_reco.append(np.sum(reco_samples_E[event_i][mask_event_i_label_i]))
 
     ax.hist((np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true), bins=50, density=True, histtype="step", linewidth=2)
-    ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{reco}$ per cluster")
+    ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{true}$ per cluster")
     ax.set_ylabel("Density")
     ax.set_yscale("log")
     #ax.legend(loc="upper right")
