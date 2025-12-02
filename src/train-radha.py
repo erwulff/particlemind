@@ -51,15 +51,17 @@ def main(args):
             configs = yaml.safe_load(file)
             print(configs)
 
-    seed_everything(0)
-    os.environ["CUDA_VISIBLE_DEVICES"] = configs["trainer_kwargs"]["visible_devices"]
-    os.environ["WANDB_CACHE_DIR"] = "/pscratch/sd/r/rmastand/"
-
-    #torch.set_float32_matmul_precision("medium")
+    
 
 
 
     if not args.generate_tokenized_dataset:
+
+        seed_everything(0)
+        os.environ["CUDA_VISIBLE_DEVICES"] = configs["trainer_kwargs"]["visible_devices"]
+        os.environ["WANDB_CACHE_DIR"] = "/pscratch/sd/r/rmastand/"
+    
+        #torch.set_float32_matmul_precision("medium")
 
         if args.logger == "wandb":
             logger = WandbLogger(
@@ -144,7 +146,7 @@ def main(args):
         )
 
         trainer.fit(model, train_loader, val_loader)
-        trainer.test(model, val_loader)
+        #trainer.test(model, val_loader)
 
     if args.generate_tokenized_dataset:
 
@@ -163,24 +165,26 @@ def main(args):
         # get the files
         parquet_files = list(Path(configs["data_kwargs"]["data_dir"]).glob("*.parquet"))
 
-        for file in parquet_files[configs["data_kwargs"]["start_files"]:configs["data_kwargs"]["stop_files"]]:
+        for i, file in enumerate(parquet_files[configs["data_kwargs"]["start_files"]:configs["data_kwargs"]["stop_files"]]):
 
-            print("Analyzing file", file.name)
+            
+            print("Analyzing file", file.name, f"(file {i})")
 
             file_dataset = CLDHitsSingleFile(file, by_event=True)
+
             file_loader = DataLoader(
                 file_dataset,
                 batch_size=configs["data_kwargs"]["batch_size"],
                 collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all"),
-                num_workers=2,
+                num_workers=0, # must be zero otherwise events are duplicated
             )
 
             codes = embedder.tokenize_dataloader(file_loader, add_start_end_tokens=True)
 
             # Save
-            ak.to_parquet(codes, args.codes_dir + "/" + file.name)
+            ak.to_parquet(codes, configs["data_kwargs"]["tokens_dir"] + "/" + file.name)
 
-            print("Saved out to", args.codes_dir + "/" + file.name)
+            print("Saved out to", configs["data_kwargs"]["tokens_dir"] + "/" + file.name)
 
     if args.train_tokenizer:
         # TODO: DEFINE DATALOADERS
@@ -222,7 +226,7 @@ def main(args):
         )
 
         trainer.fit(model, train_loader, val_loader)
-        trainer.test(model, val_loader)
+        #trainer.test(model, val_loader)
 
     if args.generate_samples:
 

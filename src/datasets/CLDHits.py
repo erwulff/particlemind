@@ -180,6 +180,8 @@ class CLDHitsSingleFile(IterableDataset):
         self.file_path = file_path
         self.by_event = by_event
 
+        data = ak.from_parquet(self.file_path)
+
     def __iter__(self):
         logger = logging.getLogger(__name__)
         """

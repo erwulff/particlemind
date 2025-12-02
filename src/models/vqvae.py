@@ -576,11 +576,14 @@ class VQVAELightning(L.LightningModule):
         ak_output = ak.Array([])
 
 
+
         with torch.no_grad():
             if not hide_pbar:
                 pbar = tqdm(dataloader)
             else:
                 pbar = dataloader
+
+       
             for i, x_batch in enumerate(pbar):
 
                 # move to device
@@ -599,7 +602,7 @@ class VQVAELightning(L.LightningModule):
                         
                         n_tokens = self.model.vqlayer.num_codes
                         row_codes = np.concatenate([[0], row_codes + 1, [n_tokens + 1]])
-                                            
+
                     ak_output = ak.concatenate([ak_output, ak.Array([row_codes])], axis = 0)
        
         
