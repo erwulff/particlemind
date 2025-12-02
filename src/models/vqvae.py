@@ -787,18 +787,18 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
             idx.append(master_idx[event].squeeze(1))
 
     # concatenate all events
-    event_samples_E = np.concatenate(event_samples_E)
-    event_samples_x = np.concatenate(event_samples_x)
-    event_samples_y = np.concatenate(event_samples_y)
-    event_samples_z = np.concatenate(event_samples_z)
-    reco_samples_E = np.concatenate(reco_samples_E)
-    reco_samples_x = np.concatenate(reco_samples_x)
-    reco_samples_y = np.concatenate(reco_samples_y)
-    reco_samples_z = np.concatenate(reco_samples_z)
-    labels_event =  np.concatenate(labels_event)
-    z_e = np.concatenate(z_e)
-    z_q = np.concatenate(z_q)
-    idx = np.concatenate(idx)
+    event_samples_E_concat = np.concatenate(event_samples_E)
+    event_samples_x_concat = np.concatenate(event_samples_x)
+    event_samples_y_concat = np.concatenate(event_samples_y)
+    event_samples_z_concat = np.concatenate(event_samples_z)
+    reco_samples_E_concat = np.concatenate(reco_samples_E)
+    reco_samples_x_concat = np.concatenate(reco_samples_x)
+    reco_samples_y_concat = np.concatenate(reco_samples_y)
+    reco_samples_z_concat = np.concatenate(reco_samples_z)
+    labels_event_concat =  np.concatenate(labels_event)
+    z_e_concat = np.concatenate(z_e)
+    z_q_concat = np.concatenate(z_q)
+    idx_concat = np.concatenate(idx)
 
    
 
@@ -813,9 +813,9 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
 
     # histogram the energies
     ax = axarr[0]
-    bins = np.linspace(np.min(event_samples_E), np.max(event_samples_E), 50)
-    ax.hist(event_samples_E, bins=bins, label="samples", density=True, histtype="step", linewidth=2)
-    ax.hist(reco_samples_E, bins=bins, label="reco", density=True, histtype="step", linewidth=2)
+    bins = np.linspace(np.min(event_samples_E_concat), np.max(event_samples_E_concat), 50)
+    ax.hist(event_samples_E_concat, bins=bins, label="samples", density=True, histtype="step", linewidth=2)
+    ax.hist(reco_samples_E_concat, bins=bins, label="reco", density=True, histtype="step", linewidth=2)
     ax.set_yscale("log")
     ax.set_xlabel("$E$")
     ax.set_ylabel("Density")
@@ -823,22 +823,23 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
 
     # histogram the difference in energy
     ax = axarr[1]
-    ax.hist(event_samples_E - reco_samples_E, bins=50, density=True, histtype="step", linewidth=2)
-    ax.set_xlabel("$E_{true} - E_{reco}$")
+    ax.hist((event_samples_E_concat - reco_samples_E_concat)/event_samples_E_concat, bins=50, density=True, histtype="step", linewidth=2)
+    ax.set_xlabel("$E_{true} - E_{reco}$ /$E_{true}$ ")
     ax.set_ylabel("Density")
+    ax.set_yscale("log")
 
     # scatter some zq - ze
     ax = axarr[2]
     ax.scatter(
-        z_q[:n_scatterpoints_to_plot, 0],
-        z_q[:n_scatterpoints_to_plot, 1],
+        z_q_concat[:n_scatterpoints_to_plot, 0],
+        z_q_concat[:n_scatterpoints_to_plot, 1],
         alpha=0.2,
         s=26,
         label="z_q",
     )
     ax.scatter(
-        z_e[:n_scatterpoints_to_plot, 0],
-        z_e[:n_scatterpoints_to_plot, 1],
+        z_e_concat[:n_scatterpoints_to_plot, 0],
+        z_e_concat[:n_scatterpoints_to_plot, 1],
         alpha=0.7,
         s=26,
         marker="x",
@@ -851,15 +852,15 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
 
     ax = axarr[3]
     ax.scatter(
-        z_q[:n_scatterpoints_to_plot, 0],
-        z_q[:n_scatterpoints_to_plot, 2],
+        z_q_concat[:n_scatterpoints_to_plot, 0],
+        z_q_concat[:n_scatterpoints_to_plot, 2],
         alpha=0.2,
         s=26,
         label="z_q",
     )
     ax.scatter(
-        z_e[:n_scatterpoints_to_plot, 0],
-        z_e[:n_scatterpoints_to_plot, 2],
+        z_e_concat[:n_scatterpoints_to_plot, 0],
+        z_e_concat[:n_scatterpoints_to_plot, 2],
         alpha=0.7,
         s=26,
         marker="x",
@@ -875,7 +876,7 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     ax = axarr[4]
     n_codes = model.vq_kwargs["num_codes"]
     bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
-    ax.hist(idx, bins=bins)
+    ax.hist(idx_concat, bins=bins)
     ax.set_yscale("log")
     ax.set_title(
         "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that" " codebook entry)",
@@ -935,12 +936,14 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
 
     # resolution (cluster energy)
     ax = axarr[5]
-    unique_labels = np.unique(labels_event)
+    unique_labels = [np.unique(l) for l in labels_event]
     hit_clusters_true, hit_clusters_reco = [], []
-    for i, label in enumerate(unique_labels):
-        mask = labels_event == label
-        hit_clusters_true.append(np.sum(event_samples_E[mask]))
-        hit_clusters_reco.append(np.sum(reco_samples_E[mask]))
+    
+    for event_i, labels_event_i in enumerate(labels_event):
+        for unique_label_event_i in unique_labels[event_i]:
+            mask_event_i = labels_event_i == unique_label_event_i
+            hit_clusters_true.append(np.sum(event_samples_E[event_i][mask_event_i]))
+            hit_clusters_reco.append(np.sum(reco_samples_E[event_i][mask_event_i]))
 
     ax.hist((np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true), bins=50, density=True, histtype="step", linewidth=2)
     ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{reco}$ per cluster")
