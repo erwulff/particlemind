@@ -1,26 +1,27 @@
 trainer_kwargs:
-  devices: 4
+  visible_devices: "0"
   accumulate_grad_batches: 128
-  max_epochs: 20
+  max_epochs: 40
   precision: 16
-  limit_train_batches: 500
-  limit_val_batches: 100
+  limit_train_batches: 4000
+  limit_val_batches: 800
 
 
 data_kwargs:
-  data_dir: "/pscratch/sd/r/rmastand/particlemind/codes/p8_ee_tt_ecm365_parquetfiles"
-  num_files: 3
+  data_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/p8_ee_tt_ecm365_parquetfiles"
+  num_files: 50
   train_fraction: 0.8
   batch_size: 2
 
 model_kwargs:
   embedding_dim: 256
   attention_dropout: 0.1
-  vocab_size: 8194
-  max_sequence_len: 128
+  vocab_size: 514
+  max_sequence_len: 2048
   n_GPT_blocks: 3
   n_heads: 8
-  verbosity: False
+  verbosity: True
+  return_embeddings: True
 
 optimizer_kwargs: 
   lr: 0.0001
@@ -28,7 +29,7 @@ optimizer_kwargs:
 
 lr_scheduler_kwargs:
   use_scheduler: True
-  warmup_frac: 0.01
+  warmup_frac: 0.1
 
 
     

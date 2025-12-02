@@ -40,6 +40,7 @@ class Tokens(IterableDataset):
         if self.shuffle_files:
             self.shuffle_shards()
 
+
     """
     def __len__(self):
        
@@ -60,6 +61,7 @@ class Tokens(IterableDataset):
         logger = logging.getLogger(__name__)
         self.sample_counter = 0  # Reset sample counter for each iteration or each epoch
         worker_info = torch.utils.data.get_worker_info()
+
         if worker_info is None:
             # Single-process data loading
             files_to_process = self.parquet_files[: self.nfiles]
@@ -72,12 +74,10 @@ class Tokens(IterableDataset):
             files_to_process = self.parquet_files[worker_id::num_workers]
             logger.info(f"Processing {len(files_to_process)} files out of {len(self.parquet_files)} total files.")
 
+
         for file in files_to_process:
             data = ak.from_parquet(file)
-
-            print(data[0])
-            print(data[1])
-
+         
             # from backbone.model_step:
                 # all token-ids up to the last one are the input, the ones from the second
                 # to the (including) last one are the target
@@ -101,6 +101,7 @@ class Tokens(IterableDataset):
                         token_i[1:].to_numpy(),
                     )
                 )
+
 
                 if self.by_event:
                     yield {

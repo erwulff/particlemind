@@ -40,6 +40,9 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, x, padding_mask=None):
         B, T, C = x.shape
+
+
+
         # input of size (batch, time-step, channels); channels = embedding dimension
         # output of size (batch, time-step, embedding_dim)
 
@@ -61,6 +64,7 @@ class MultiHeadAttention(nn.Module):
         # Compute scaled dot-product attention
         # (B, n_heads, T, head_dim) @ (B, n_heads, head_dim, T) -> (B, n_heads, T, T)
         attn_scores = q @ k.transpose(2, 3) * k.shape[-1] ** -0.5
+
 
         if padding_mask is not None:
             padding_mask = padding_mask.unsqueeze(-1).expand(-1, -1, T)  # (B, T) -> (B, T, T)
@@ -197,7 +201,6 @@ class BackboneModel(nn.Module):
 
     def forward(self, x, padding_mask=None):
         x = self.embedding_table(x)
-
         for block in self.GPT_blocks:
             x = block(x, padding_mask=padding_mask)
 

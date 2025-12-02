@@ -126,19 +126,27 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
 
 
         X = batch["token_features"]
-        X = X.squeeze().long()
-        input = X[:, :, 0]
-        targets = X[:, :, 1]
 
-        mask = batch["mask"]
+        # hack for how
+        #X[:,self.module.max_sequence_len-1,1] = 513
+#
+        X = X.squeeze().long()
+        input = X[:, :self.module.max_sequence_len, 0] # NEW
+        targets = X[:, :self.module.max_sequence_len, 1] # NEW
+        mask = batch["mask"][:,:self.module.max_sequence_len] # NEW
 
         # compute the logits (i.e. the predictions for the next token)
         logits = self.forward(input, mask)
 
+
         # reshape the logits and targets to work with the loss function
         B, T, C = logits.shape
         logits = logits.view(B * T, C)
+
         targets = targets.contiguous().view(B * T)
+
+        
+
 
         loss = self.criterion(logits, targets)
 
@@ -244,10 +252,12 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
 
         return loss
 
+    """
     def on_train_start(self) -> None:
         self.preprocessing_dict = (
             self.trainer.datamodule.hparams.dataset_kwargs_common.feature_dict
         )
+    """
 
     def on_train_epoch_start(self):
         logger.info(f"Epoch {self.trainer.current_epoch} starting.")
@@ -279,8 +289,8 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         loss, X, logits, mask, targets = self.model_step(batch, return_logits=True)
 
-        self.val_token_ids_list.append(batch["part_features"].float().detach().cpu().numpy())
-        self.val_token_masks_list.append(batch["part_mask"].float().detach().cpu().numpy())
+        #self.val_token_ids_list.append(batch["part_features"].float().detach().cpu().numpy())
+        #self.val_token_masks_list.append(batch["part_mask"].float().detach().cpu().numpy())
         self.log("val_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True)
 
         return loss
@@ -301,7 +311,7 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
 
     def configure_optimizers(self):
         # --- Optimizer --- #
-        optimizer = torch.optim.AdamW(self.model.parameters(), **self.optimizer_kwargs)
+        optimizer = torch.optim.AdamW(self.module.parameters(), **self.optimizer_kwargs)
 
 
         print("estimated steps", self.trainer.estimated_stepping_batches)

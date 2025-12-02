@@ -1,9 +1,10 @@
 data_kwargs:
   data_dir: "/pscratch/sd/r/rmastand/particlemind/data/p8_ee_tt_ecm365_parquetfiles"
+  tokens_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/p8_ee_tt_ecm365_parquetfiles"
   start_files: 0
-  stop_files: 1
-  batch_size: 2
+  stop_files: 50
+  batch_size: 10
 
 model_kwargs:
-  checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=48.ckpt"
+  checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=27.ckpt"
 
