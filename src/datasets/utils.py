@@ -27,9 +27,15 @@ class Collater:
 
         if self.variable_size_keys == "all":
             for key in inputs[0].keys():
-                ret[key] = torch.nn.utils.rnn.pad_sequence(
-                    [torch.tensor(inp[key]).to(torch.float32) for inp in inputs], batch_first=True
-                )
+
+                if self.pad > 0:
+                    ret[key] = torch.nn.utils.rnn.pad_sequence(
+                        [torch.tensor(inp[key][:self.pad]).to(torch.float32) for inp in inputs], batch_first=True
+                    )
+                else: 
+                    ret[key] = torch.nn.utils.rnn.pad_sequence(
+                        [torch.tensor(inp[key]).to(torch.float32) for inp in inputs], batch_first=True
+                    )
 
             # get mask
             axis_sum = torch.sum(torch.abs(ret[self.empty_key]), dim=2)
@@ -38,6 +44,7 @@ class Collater:
 
             return ret
 
+        """
         # per-particle quantities need to be padded across events of different size
         for key_to_get in self.variable_size_keys:
             ret[key_to_get] = torch.nn.utils.rnn.pad_sequence(
@@ -49,3 +56,5 @@ class Collater:
             for key_to_get in self.fixed_size_keys:
                 ret[key_to_get] = torch.stack([torch.tensor(inp[key_to_get]) for inp in inputs])
         return ret
+
+        """

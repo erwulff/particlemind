@@ -138,13 +138,13 @@ def main(args):
         train_loader = DataLoader(
             train_dataset,
             batch_size=configs["data_kwargs"]["batch_size"],
-            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all"),
+            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
             num_workers=2,
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=configs["data_kwargs"]["batch_size"],
-            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all"),
+            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
             num_workers=2,
         )
 
@@ -180,7 +180,7 @@ def main(args):
             file_loader = DataLoader(
                 file_dataset,
                 batch_size=configs["data_kwargs"]["batch_size"],
-                collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all"),
+                collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
                 num_workers=0, # must be zero otherwise events are duplicated
             )
             codes = embedder.tokenize_dataloader(file_loader, add_start_end_tokens=True)
@@ -190,7 +190,6 @@ def main(args):
             print("Saved out to", configs["data_kwargs"]["tokens_dir"] + "/" + file.name)
 
     if args.train_backbone:
-        # TODO: DEFINE DATALOADERS
         train_dataset = Tokens(
             configs["data_kwargs"]["data_dir"],
             "train",
@@ -240,9 +239,11 @@ def main(args):
         )
 
         for file_id in range(configs["data_kwargs"]["n_files"]):
-            print(f"On file {file_id} of {configs["data_kwargs"]["n_files"]}...")
+            print(f"On file {file_id} of ({file_id + 1} of {configs["data_kwargs"]["n_files"]})...")
             samples_tokens = gpt_backbone.generate_n_events_batched(configs["data_kwargs"]["n_events_per_file"], configs["data_kwargs"]["batch_size"])
             ak.to_parquet(samples_tokens, configs["data_kwargs"]["tokens_dir"] + "/" + f"generated_{file_id}.parquet")
+
+     
         print("Done generating tokens!")
 
     if args.generate_samples_events:
@@ -253,8 +254,8 @@ def main(args):
         )
 
         for file_id in range(configs["data_kwargs"]["n_files"]):
-            print(f"On file {file_id} of {configs["data_kwargs"]["n_files"]}...")
-
+            print(f"On file {file_id} of ({file_id + 1} of {configs["data_kwargs"]["n_files"]})...")
+            
             tokens_dataset = TokensSingleFile(
                 configs["data_kwargs"]["tokens_dir"] + "/" + f"generated_{file_id}.parquet",
                 by_event=True,

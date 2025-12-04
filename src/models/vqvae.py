@@ -433,6 +433,8 @@ class VQVAELightning(L.LightningModule):
         mask_particle = batch["mask"]
         labels = batch["hit_labels"]
 
+    
+
 
         x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
 
