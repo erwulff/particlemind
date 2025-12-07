@@ -3,8 +3,8 @@ trainer_kwargs:
   accumulate_grad_batches: 128
   max_epochs: 50
   precision: 16
-  limit_train_batches: 8000
-  limit_val_batches: 2000
+  limit_train_batches: 4000
+  limit_val_batches: 1000
 
 data_kwargs:
   data_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/p8_ee_tt_ecm365_parquetfiles"
