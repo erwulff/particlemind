@@ -5,6 +5,7 @@ import os
 from argparse import ArgumentParser
 
 import torch
+
 import yaml
 
 from pathlib import Path
@@ -25,7 +26,9 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 
-
+@rank_zero_only
+def print_rank0(*args, **kwargs):
+    print(*args, **kwargs)
 
 
 @rank_zero_only
@@ -39,27 +42,26 @@ def main(args):
         project = "vqvae_training"
         with open(f"configs/{args.config_embedder}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print(configs)
+            
             filename = f"embedder_{args.name}_val_loss_" + "{epoch:02d}"
+            print_rank0(configs)
 
     elif args.generate_tokenized_dataset:
         with open(f"configs/{args.config_tokenizer}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print(configs)
+            print_rank0(configs)
 
     elif args.train_backbone:
         project = "gpt_training"
         with open(f"configs/{args.config_gpt}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print(configs)
+            print_rank0(configs)
             filename = f"gpt_{args.name}_val_loss_" + "{epoch:02d}"
 
     elif (args.generate_samples_tokens or args.generate_samples_events):
         with open(f"configs/{args.config_generation}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print(configs)
-
-    
+            print_rank0(configs)
 
 
 
@@ -96,7 +98,7 @@ def main(args):
     
         trainer = Trainer(
             logger=logger,
-            devices=len(configs["trainer_kwargs"]["visible_devices"].split(",")),
+            devices= "auto",#len(configs["trainer_kwargs"]["visible_devices"].split(",")),
             accelerator="cuda",
             strategy="ddp_find_unused_parameters_true",
             accumulate_grad_batches=configs["trainer_kwargs"]["accumulate_grad_batches"],
@@ -107,8 +109,8 @@ def main(args):
             callbacks=callbacks,
             precision=configs["trainer_kwargs"]["precision"],
             default_root_dir=f"{args.save_dir}/{project}/",
-            limit_train_batches=configs["trainer_kwargs"]["limit_train_batches"],
-            limit_val_batches=configs["trainer_kwargs"]["limit_val_batches"],
+            #limit_train_batches=configs["trainer_kwargs"]["limit_train_batches"],
+            #limit_val_batches=configs["trainer_kwargs"]["limit_val_batches"],
         )
 
     else:
@@ -121,7 +123,7 @@ def main(args):
         train_dataset = CLDHits(
             configs["data_kwargs"]["data_dir"],
             "train",
-            #nfiles=configs["data_kwargs"]["num_files"],
+            nfiles=configs["data_kwargs"]["num_files"],
             by_event=True,
             shuffle_files=True,
             train_fraction=configs["data_kwargs"]["train_fraction"],
@@ -129,7 +131,7 @@ def main(args):
         val_dataset = CLDHits(
             configs["data_kwargs"]["data_dir"],
             "val",
-            #nfiles=configs["data_kwargs"]["num_files"],
+            nfiles=configs["data_kwargs"]["num_files"],
             by_event=True,
             shuffle_files=False,
             train_fraction=configs["data_kwargs"]["train_fraction"],
@@ -137,13 +139,13 @@ def main(args):
     
         train_loader = DataLoader(
             train_dataset,
-            batch_size=configs["data_kwargs"]["batch_size"],
+            batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
             num_workers=2,
         )
         val_loader = DataLoader(
             val_dataset,
-            batch_size=configs["data_kwargs"]["batch_size"],
+            batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
             num_workers=2,
         )
@@ -154,6 +156,8 @@ def main(args):
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
             model_kwargs=configs["model_kwargs"],
             model_type="VQVAENormFormer",
+            num_train_events=configs["data_kwargs"]["num_files"]*100*configs["data_kwargs"]["train_fraction"],
+            batch_size_per_gpu=configs["data_kwargs"]["batch_size_per_gpu"],
         )
 
         trainer.fit(model, train_loader, val_loader)
@@ -179,7 +183,7 @@ def main(args):
 
             file_loader = DataLoader(
                 file_dataset,
-                batch_size=configs["data_kwargs"]["batch_size"],
+                batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
                 collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
                 num_workers=0, # must be zero otherwise events are duplicated
             )
@@ -193,7 +197,7 @@ def main(args):
         train_dataset = Tokens(
             configs["data_kwargs"]["data_dir"],
             "train",
-            #nfiles=configs["data_kwargs"]["num_files"],
+            nfiles=configs["data_kwargs"]["num_files"],
             by_event=True,
             shuffle_files=True,
             train_fraction=configs["data_kwargs"]["train_fraction"],
@@ -201,7 +205,7 @@ def main(args):
         val_dataset = Tokens(
             configs["data_kwargs"]["data_dir"],
             "val",
-            #nfiles=configs["data_kwargs"]["num_files"],
+            nfiles=configs["data_kwargs"]["num_files"],
             by_event=True,
             shuffle_files=False,
             train_fraction=configs["data_kwargs"]["train_fraction"],
@@ -209,13 +213,13 @@ def main(args):
 
         train_loader = DataLoader(
             train_dataset,
-            batch_size=configs["data_kwargs"]["batch_size"],
+            batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
             num_workers=2,
         )
         val_loader = DataLoader(
             val_dataset,
-            batch_size=configs["data_kwargs"]["batch_size"],
+            batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
             num_workers=2,
         )
@@ -240,7 +244,7 @@ def main(args):
 
         for file_id in range(configs["data_kwargs"]["n_files"]):
             print(f"On file {file_id} of ({file_id + 1} of {configs["data_kwargs"]["n_files"]})...")
-            samples_tokens = gpt_backbone.generate_n_events_batched(configs["data_kwargs"]["n_events_per_file"], configs["data_kwargs"]["batch_size"])
+            samples_tokens = gpt_backbone.generate_n_events_batched(configs["data_kwargs"]["n_events_per_file"], configs["data_kwargs"]["batch_size_per_gpu"])
             ak.to_parquet(samples_tokens, configs["data_kwargs"]["tokens_dir"] + "/" + f"generated_{file_id}.parquet")
 
      
@@ -264,7 +268,7 @@ def main(args):
            
             tokens_loader = DataLoader(
                 tokens_dataset,
-                batch_size=configs["data_kwargs"]["batch_size"],
+                batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
                 collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
                 num_workers=0,
             )

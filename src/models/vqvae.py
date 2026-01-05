@@ -18,7 +18,9 @@ from torch.utils.data import DataLoader, TensorDataset
 import torch.distributed as dist
 
 from tqdm import tqdm
-from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
+
+from src.models.optimizers import configure_optimizers_base
+
 
 
 # vqtorch can be installed from https://github.com/minyoungg/vqtorch
@@ -348,6 +350,8 @@ class VQVAELightning(L.LightningModule):
         lr_scheduler_kwargs = {"use_scheduler":False},
         model_kwargs={},
         model_type="Transformer",
+        num_train_events=0,
+        batch_size_per_gpu=0,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -379,45 +383,11 @@ class VQVAELightning(L.LightningModule):
         self.val_x_reco = []
         self.val_mask = []
 
+        self.num_train_events = num_train_events
+        self.batch_size_per_gpu = batch_size_per_gpu
+
     def configure_optimizers(self):
-        # --- Optimizer --- #
-        optimizer = torch.optim.AdamW(self.model.parameters(), **self.optimizer_kwargs)
-
-
-        print("estimated steps", self.trainer.estimated_stepping_batches)
-        # --- Scheduler --- #
-        if self.lr_scheduler_kwargs["use_scheduler"]:
-            total_steps = self.trainer.estimated_stepping_batches
-            warmup_frac = self.lr_scheduler_kwargs.get("warmup_frac", 0.01)
-            warmup_steps = max(int(total_steps * warmup_frac), 1)
-            cosine_steps = total_steps - warmup_steps
-    
-            # Linear warmup
-            warmup_scheduler = LinearLR(
-                optimizer, start_factor=1e-6, end_factor=1.0, total_iters=warmup_steps
-            )
-            # Cosine decay
-            cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_steps, eta_min=1e-6)
-    
-            # Combine schedulers
-            scheduler = SequentialLR(
-                optimizer,
-                schedulers=[warmup_scheduler, cosine_scheduler],
-                milestones=[warmup_steps],
-            )
-    
-            # Lightning dict format
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "interval": "step",      # step-wise LR updates
-                    "frequency": 1,
-                    "name": "lr",            # wandb logging name
-                },
-            }
-    
-        return optimizer
+        return configure_optimizers_base(self)
 
 
 

@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import vector
 from tqdm import tqdm
-from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingLR
+from src.models.optimizers import configure_optimizers_base
 
 
 #from gabbro.metrics.utils import calc_accuracy
@@ -316,44 +316,7 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
         pass
 
     def configure_optimizers(self):
-        # --- Optimizer --- #
-        optimizer = torch.optim.AdamW(self.module.parameters(), **self.optimizer_kwargs)
-
-
-        print("estimated steps", self.trainer.estimated_stepping_batches)
-        # --- Scheduler --- #
-        if self.lr_scheduler_kwargs["use_scheduler"]:
-            total_steps = self.trainer.estimated_stepping_batches
-            warmup_frac = self.lr_scheduler_kwargs.get("warmup_frac", 0.01)
-            warmup_steps = max(int(total_steps * warmup_frac), 1)
-            cosine_steps = total_steps - warmup_steps
-    
-            # Linear warmup
-            warmup_scheduler = LinearLR(
-                optimizer, start_factor=1e-6, end_factor=1.0, total_iters=warmup_steps
-            )
-            # Cosine decay
-            cosine_scheduler = CosineAnnealingLR(optimizer, T_max=cosine_steps, eta_min=1e-6)
-    
-            # Combine schedulers
-            scheduler = SequentialLR(
-                optimizer,
-                schedulers=[warmup_scheduler, cosine_scheduler],
-                milestones=[warmup_steps],
-            )
-    
-            # Lightning dict format
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "interval": "step",      # step-wise LR updates
-                    "frequency": 1,
-                    "name": "lr",            # wandb logging name
-                },
-            }
-    
-        return optimizer
+        return configure_optimizers_base(self)
 
 
 # -------------------------------------------------------------------------
@@ -669,26 +632,4 @@ class BackboneClassificationLightning(L.LightningModule):
         print("Test epoch finished.")
 
     def configure_optimizers(self) -> Dict[str, Any]:
-        """Configures optimizers and learning-rate schedulers to be used for training."""
-        if self.hparams.model_kwargs.keep_backbone_fixed:
-            print("--- Keeping backbone fixed. ---")
-            optimizer = self.hparams.optimizer(
-                [
-                    {"params": self.module.parameters(), "lr": 0.0},
-                    {"params": self.head.parameters()},
-                ]
-            )
-        else:
-            optimizer = self.hparams.optimizer(params=self.parameters())
-        if self.hparams.scheduler is not None:
-            scheduler = self.hparams.scheduler(optimizer=optimizer)
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "monitor": "val_loss",
-                    "interval": "epoch",
-                    "frequency": 1,
-                },
-            }
-        return {"optimizer": optimizer}
+        return configure_optimizers_base(self)

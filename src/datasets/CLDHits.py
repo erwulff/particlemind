@@ -64,7 +64,7 @@ class CLDHits(IterableDataset):
             shuffle_files (bool): Whether to shuffle the order of parquet files.
         """
         self.folder_path = Path(folder_path)
-        self.parquet_files = list(self.folder_path.glob("*.parquet"))
+        self.parquet_files = list(self.folder_path.glob("*.parquet"))[:nfiles]
         self.shuffle_files = shuffle_files
         self.nsamples = nsamples
         if self.nsamples is not None:
@@ -83,15 +83,14 @@ class CLDHits(IterableDataset):
         if self.shuffle_files:
             self.shuffle_shards()
 
-    """
+
     def __len__(self):
        
-        #Return the number of events in the dataset.
-        
+        # Return the number of events in the dataset
         data = ak.from_parquet(self.parquet_files[0])
         events_per_file = len(data[data.fields[0]])
         return len(self.parquet_files) * events_per_file if self.nsamples is None else self.nsamples
-    """
+
 
     def shuffle_shards(self):
         """
@@ -105,7 +104,7 @@ class CLDHits(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
             # Single-process data loading
-            files_to_process = self.parquet_files[: self.nfiles]
+            files_to_process = self.parquet_files#[: self.nfiles]
             logger.info(f"Processing {len(files_to_process)} files in single-process mode.")
 
         else:
