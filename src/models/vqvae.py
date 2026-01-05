@@ -424,7 +424,14 @@ class VQVAELightning(L.LightningModule):
         loss = self.model_step(batch)
 
         self.train_loss_history.append(loss.detach().cpu().numpy())
-        self.log("train_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log(
+                "train_loss",
+                loss,                # <-- pass the tensor, not loss.item()
+                on_step=True,
+                on_epoch=True,       # optional if you also want epoch avg
+                prog_bar=True,
+                sync_dist=True       # sync across GPUs
+            )
 
         return loss
 

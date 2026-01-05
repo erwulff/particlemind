@@ -85,12 +85,23 @@ class CLDHits(IterableDataset):
 
 
     def __len__(self):
-       
-        # Return the number of events in the dataset
+        # Get total events across files
         data = ak.from_parquet(self.parquet_files[0])
         events_per_file = len(data[data.fields[0]])
-        return len(self.parquet_files) * events_per_file if self.nsamples is None else self.nsamples
+        total_events = len(self.parquet_files) * events_per_file
+    
+        # --- CHANGE 1: DDP aware length ---
+        if torch.distributed.is_initialized():
+            world_size = torch.distributed.get_world_size()
+            rank = torch.distributed.get_rank()
+            # Divide total events among ranks
+            total_events = (total_events + world_size - 1) // world_size
+    
+        # --- CHANGE 2: Limit by nsamples if set ---
+        if self.nsamples is not None:
+            total_events = min(total_events, self.nsamples)
 
+        return total_events
 
     def shuffle_shards(self):
         """
@@ -101,19 +112,34 @@ class CLDHits(IterableDataset):
     def __iter__(self):
         logger = logging.getLogger(__name__)
         self.sample_counter = 0  # Reset sample counter for each iteration or each epoch
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:
-            # Single-process data loading
-            files_to_process = self.parquet_files#[: self.nfiles]
-            logger.info(f"Processing {len(files_to_process)} files in single-process mode.")
 
-        else:
-            # Multi-process data loading, split the files among workers
+        # --- CHANGE 1: get DDP rank & world_size --- #
+        rank = 0
+        world_size = 1
+        if torch.distributed.is_initialized():  # check if DDP is initialized
+            rank = torch.distributed.get_rank()
+            world_size = torch.distributed.get_world_size()
+
+            
+        # --- CHANGE 2: get DataLoader worker info --- #
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = 0
+        num_workers = 1
+        if worker_info is not None:
             worker_id = worker_info.id
             num_workers = worker_info.num_workers
-            files_to_process = self.parquet_files[worker_id::num_workers]
-            logger.info(f"Processing {len(files_to_process)} files out of {len(self.parquet_files)} total files.")
 
+        # --- CHANGE 3: shard files across rank then worker --- #
+        files_to_process = self.parquet_files[rank::world_size]       # shard by rank
+        files_to_process = files_to_process[worker_id::num_workers]   # shard by worker
+
+        if rank == 0 and (worker_info is None or worker_info.id == 0):
+            if self.split == "train":
+                print(f"TRAIN DATASET: rank {rank}/{world_size}, Worker {worker_id}/{num_workers}, processing {len(files_to_process)} files.")
+            if self.split == "val":
+                print(f"VAL DATASET: rank {rank}/{world_size}, Worker {worker_id}/{num_workers}, processing {len(files_to_process)} files.")
+
+        # Iterate over files
         for file in files_to_process:
             data = ak.from_parquet(file)
             for event_i in range(len(data["genparticle_to_calo_hit_matrix"])):

@@ -2,7 +2,7 @@
 #SBATCH -A m4474
 #SBATCH -C gpu
 #SBATCH -q regular
-#SBATCH -t 0:20:00
+#SBATCH -t 0:30:00
 #SBATCH -N 1
 #SBATCH -J vqvae
 #SBATCH --array=0-3
