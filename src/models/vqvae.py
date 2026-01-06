@@ -352,6 +352,7 @@ class VQVAELightning(L.LightningModule):
         model_type="Transformer",
         num_train_events=0,
         batch_size_per_gpu=0,
+        plot_dir_name="",
         **kwargs,
     ) -> None:
         super().__init__()
@@ -385,6 +386,10 @@ class VQVAELightning(L.LightningModule):
 
         self.num_train_events = num_train_events
         self.batch_size_per_gpu = batch_size_per_gpu
+
+        self.plot_dir_name = plot_dir_name
+
+        
 
     def configure_optimizers(self):
         return configure_optimizers_base(self)
@@ -494,7 +499,7 @@ class VQVAELightning(L.LightningModule):
 
             curr_epoch, curr_step = self.trainer.current_epoch, self.trainer.global_step
 
-            plot_dir = Path(self.trainer.default_root_dir + "/plots/")
+            plot_dir = Path(self.trainer.default_root_dir + f"/plots/{self.plot_dir_name}/")
             plot_dir.mkdir(exist_ok=True)
             plot_filename = f"{plot_dir}/epoch{curr_epoch}_gstep{curr_step}"
             # log the plot
@@ -968,7 +973,8 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     ax.set_ylabel("$y$")
     ax.set_title("Data")
     # add colorbar axis
-    plt.colorbar(h[3], ax=ax)
+    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
+        plt.colorbar(h[3], ax=ax)
 
     # reco, x-y
     ax = axarr[1]
@@ -976,7 +982,8 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     ax.set_xlabel("$x$")
     ax.set_ylabel("$y$")
     ax.set_title("Reco")
-    plt.colorbar(h[3], ax=ax)
+    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
+        plt.colorbar(h[3], ax=ax)
 
     # data, x-z
     ax = axarr[2]
@@ -984,7 +991,8 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     ax.set_xlabel("$x$")
     ax.set_ylabel("$z$")
     ax.set_title("Data")
-    plt.colorbar(h[3], ax=ax)
+    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
+        plt.colorbar(h[3], ax=ax)
 
     # reco, x-z
     ax = axarr[3]
@@ -992,7 +1000,8 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     ax.set_xlabel("$x$")
     ax.set_ylabel("$z$")
     ax.set_title("Reco")
-    plt.colorbar(h[3], ax=ax)
+    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
+        plt.colorbar(h[3], ax=ax)
 
     # data, y-z
     ax = axarr[4]
@@ -1000,7 +1009,8 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     ax.set_xlabel("$y$")
     ax.set_ylabel("$z$")
     ax.set_title("Data")
-    plt.colorbar(h[3], ax=ax)
+    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
+        plt.colorbar(h[3], ax=ax)
 
     # reco, y-z
     ax = axarr[5]
@@ -1008,7 +1018,9 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     ax.set_xlabel("$y$")
     ax.set_ylabel("$z$")
     ax.set_title("Reco")
-    plt.colorbar(h[3], ax=ax)
+    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
+        plt.colorbar(h[3], ax=ax)
+
 
     for ax in axarr.flatten():
         if is_axes_empty(ax):

@@ -38,6 +38,8 @@ def log_config(logger, args):
 
 
 def main(args):
+    torch.multiprocessing.set_start_method('spawn')
+    
     if args.train_embedder:
         project = "vqvae_training"
         with open(f"configs/{args.config_embedder}.yaml", "r") as file:
@@ -62,6 +64,8 @@ def main(args):
         with open(f"configs/{args.config_generation}.yaml", "r") as file:
             configs = yaml.safe_load(file)
             print_rank0(configs)
+
+    
 
 
 
@@ -124,7 +128,6 @@ def main(args):
             configs["data_kwargs"]["data_dir"],
             "train",
             nfiles=configs["data_kwargs"]["num_files"],
-            by_event=True,
             shuffle_files=True,
             train_fraction=configs["data_kwargs"]["train_fraction"],
         )
@@ -132,7 +135,6 @@ def main(args):
             configs["data_kwargs"]["data_dir"],
             "val",
             nfiles=configs["data_kwargs"]["num_files"],
-            by_event=True,
             shuffle_files=False,
             train_fraction=configs["data_kwargs"]["train_fraction"],
         )
@@ -158,6 +160,7 @@ def main(args):
             model_type="VQVAENormFormer",
             num_train_events=configs["data_kwargs"]["num_files"]*100*configs["data_kwargs"]["train_fraction"],
             batch_size_per_gpu=configs["data_kwargs"]["batch_size_per_gpu"],
+            plot_dir_name=args.name
         )
 
         trainer.fit(model, train_loader, val_loader)
@@ -179,7 +182,7 @@ def main(args):
 
 
             print("Analyzing file", file.name, f"(file {i})")
-            file_dataset = CLDHitsSingleFile(file, by_event=True)
+            file_dataset = CLDHitsSingleFile(file)
 
             file_loader = DataLoader(
                 file_dataset,
@@ -198,7 +201,6 @@ def main(args):
             configs["data_kwargs"]["data_dir"],
             "train",
             nfiles=configs["data_kwargs"]["num_files"],
-            by_event=True,
             shuffle_files=True,
             train_fraction=configs["data_kwargs"]["train_fraction"],
         )
@@ -206,7 +208,6 @@ def main(args):
             configs["data_kwargs"]["data_dir"],
             "val",
             nfiles=configs["data_kwargs"]["num_files"],
-            by_event=True,
             shuffle_files=False,
             train_fraction=configs["data_kwargs"]["train_fraction"],
         )
@@ -262,7 +263,6 @@ def main(args):
             
             tokens_dataset = TokensSingleFile(
                 configs["data_kwargs"]["tokens_dir"] + "/" + f"generated_{file_id}.parquet",
-                by_event=True,
                 remove_start_stop_tokens=True,
             )
            

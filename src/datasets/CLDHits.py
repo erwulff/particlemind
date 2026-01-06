@@ -54,7 +54,7 @@ def inverse_standardize_calo_hit_features(calo_hit_features):
 
 class CLDHits(IterableDataset):
     def __init__(
-        self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8, nfiles=-1, by_event=True
+        self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8, nfiles=-1
     ):
         """
         Initialize the dataset by storing the paths to all parquet files in the specified folder.
@@ -70,7 +70,6 @@ class CLDHits(IterableDataset):
         if self.nsamples is not None:
             self.sample_counter = 0
         self.nfiles = nfiles
-        self.by_event = by_event
 
         self.split = split
         if self.split is not None:
@@ -133,6 +132,10 @@ class CLDHits(IterableDataset):
         files_to_process = self.parquet_files[rank::world_size]       # shard by rank
         files_to_process = files_to_process[worker_id::num_workers]   # shard by worker
 
+        if len(files_to_process) == 0:
+            print(f"Rank {rank}, worker {worker_id} has no files to process")
+            return
+
         if rank == 0 and (worker_info is None or worker_info.id == 0):
             if self.split == "train":
                 print(f"TRAIN DATASET: rank {rank}/{world_size}, Worker {worker_id}/{num_workers}, processing {len(files_to_process)} files.")
@@ -168,33 +171,19 @@ class CLDHits(IterableDataset):
                     hit_idx, gen_idx, weights
                 )  # This could be moved to the pre-processing step if needed
 
-                if self.by_event:
-                    yield {
-                        # "gen_idx": gen_idx,
-                        # "hit_idx": hit_idx,
-                        # "weights": weights,
-                        "hit_labels": hit_labels,
-                        "calo_hit_features": standardize_calo_hit_features(calo_hit_features),
-                    }
+                yield {
+                    # "gen_idx": gen_idx,
+                    # "hit_idx": hit_idx,
+                    # "weights": weights,
+                    "hit_labels": hit_labels,
+                    "calo_hit_features": standardize_calo_hit_features(calo_hit_features),
+                }
 
-                else:
-
-                    # return one hit at a time instead of one event
-                    for i in range(len(calo_hit_features)):
-                        if self.nsamples is not None and self.sample_counter >= self.nsamples:
-                            return
-                        self.sample_counter += 1
-
-                        yield {
-                            "hit_labels": hit_labels[i : i + 1],  # Shape (1,) or (1, label_dim)
-                            "calo_hit_features": calo_hit_features[i : i + 1],  # Shape (1, num_features)
-                        }
-
+             
 
 class CLDHitsSingleFile(IterableDataset):
     def __init__(
-        self, file_path, by_event=True
-    ):
+        self, file_path    ):
         """
         Initialize the dataset by storing the paths to all parquet files in the specified folder.
 
@@ -203,7 +192,6 @@ class CLDHitsSingleFile(IterableDataset):
             shuffle_files (bool): Whether to shuffle the order of parquet files.
         """
         self.file_path = file_path
-        self.by_event = by_event
 
         data = ak.from_parquet(self.file_path)
 
@@ -254,25 +242,12 @@ class CLDHitsSingleFile(IterableDataset):
                 hit_idx, gen_idx, weights
             )  # This could be moved to the pre-processing step if needed
 
-            if self.by_event:
-                yield {
-                    # "gen_idx": gen_idx,
-                    # "hit_idx": hit_idx,
-                    # "weights": weights,
-                    "hit_labels": hit_labels,
-                    "calo_hit_features": standardize_calo_hit_features(calo_hit_features),
-                }
-
-            else:
-
-                # return one hit at a time instead of one event
-                for i in range(len(calo_hit_features)):
-                    if self.nsamples is not None and self.sample_counter >= self.nsamples:
-                        return
-                    self.sample_counter += 1
-
-                    yield {
-                        "hit_labels": hit_labels[i : i + 1],  # Shape (1,) or (1, label_dim)
-                        "calo_hit_features": calo_hit_features[i : i + 1],  # Shape (1, num_features)
-                    }
+          
+            yield {
+                # "gen_idx": gen_idx,
+                # "hit_idx": hit_idx,
+                # "weights": weights,
+                "hit_labels": hit_labels,
+                "calo_hit_features": standardize_calo_hit_features(calo_hit_features),
+            }
 

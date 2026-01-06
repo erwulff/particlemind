@@ -11,7 +11,7 @@ import logging
 
 class Tokens(IterableDataset):
     def __init__(
-        self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8, nfiles=-1, by_event=True, remove_start_stop_tokens=False,
+        self, folder_path, split, nsamples=None, shuffle_files=False, train_fraction=0.8, nfiles=-1, remove_start_stop_tokens=False,
     ):
         """
         Initialize the dataset by storing the paths to all parquet files in the specified folder.
@@ -27,7 +27,6 @@ class Tokens(IterableDataset):
         if self.nsamples is not None:
             self.sample_counter = 0
         self.nfiles = nfiles
-        self.by_event = by_event
         self.remove_start_stop_tokens = remove_start_stop_tokens
 
         self.split = split
@@ -110,28 +109,17 @@ class Tokens(IterableDataset):
                     )
 
 
-                if self.by_event:
-                    yield {
-                        "token_features": token_features,
-                    }
-
-                else:
-                    # return one hit at a time instead of one event
-                    for i in range(len(calo_hit_features)):
-                        if self.nsamples is not None and self.sample_counter >= self.nsamples:
-                            return
-                        self.sample_counter += 1
-
-                        yield {
-                            "token_features": token_features[i : i + 1],  # Shape (1,) or (1, label_dim)
-                        }
+               
+                yield {
+                    "token_features": token_features,
+                }
 
 
 
 
 class TokensSingleFile(IterableDataset):
     def __init__(
-        self, file_path, by_event=True, remove_start_stop_tokens=True,
+        self, file_path, remove_start_stop_tokens=True,
     ):
         """
         Initialize the dataset by storing the paths to all parquet files in the specified folder.
@@ -141,7 +129,6 @@ class TokensSingleFile(IterableDataset):
             shuffle_files (bool): Whether to shuffle the order of parquet files.
         """
         self.file_path = file_path
-        self.by_event = by_event
         self.remove_start_stop_tokens = remove_start_stop_tokens
 
 
@@ -187,20 +174,8 @@ class TokensSingleFile(IterableDataset):
                 )
 
 
-            if self.by_event:
-                yield {
-                    "token_features": token_features.astype(int)
-                }
-
-            else:
-                # return one hit at a time instead of one event
-                for i in range(len(calo_hit_features)):
-                    if self.nsamples is not None and self.sample_counter >= self.nsamples:
-                        return
-                    self.sample_counter += 1
-
-                    yield {
-                        "token_features": token_features[i : i + 1],  # Shape (1,) or (1, label_dim)
-                    }
-
+      
+            yield {
+                "token_features": token_features.astype(int)
+            }
 
