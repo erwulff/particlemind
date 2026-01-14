@@ -634,15 +634,15 @@ def gen_to_features(event_data, iev):
         # "gp_to_track": np.zeros(len(gen_arr["PDG"]), dtype=np.float64),
         # "gp_to_cluster": np.zeros(len(gen_arr["PDG"]), dtype=np.float64),
         # "jet_idx": np.zeros(len(gen_arr["PDG"]), dtype=np.int64),
-        # "daughters_begin": gen_arr["daughters_begin"],
-        # "daughters_end": gen_arr["daughters_end"],
+        "daughters_begin": gen_arr["daughters_begin"],
+        "daughters_end": gen_arr["daughters_end"],
         "px": gen_arr["momentum.x"],
         "py": gen_arr["momentum.y"],
         "pz": gen_arr["momentum.z"],
         "mass": gen_arr["mass"],
     }
 
-    # ret["index"] = prop_data["_MCParticles_daughters/_MCParticles_daughters.index"][iev]
+    ret["daughters_index"] = event_data["_MCParticles_daughters/_MCParticles_daughters.index"][iev]
 
     # make all values numpy arrays
     ret = {k: ak.to_numpy(v) for k, v in ret.items()}
