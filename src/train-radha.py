@@ -15,7 +15,7 @@ from lightning import Trainer, seed_everything
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
-from src.datasets.colliderMLHits import colliderMLHits
+from src.datasets.colliderMLHits import colliderMLHits, ColliderMLHitsIndexed
 from src.datasets.Tokens import Tokens, TokensSingleFile
 from src.datasets.utils import Collater
 from src.models.backbone import BackboneNextTokenPredictionLightning
@@ -184,7 +184,14 @@ def main(args):
 
 
             print("Analyzing file", file.name, f"(file {i})")
-            file_dataset = CLDHitsSingleFile(file)
+            file_dataset = ColliderMLHitsIndexed(
+                configs["data_kwargs"]["subset"],
+                "val",
+                start_idx=i*configs["data_kwargs"]["events_per_file"],
+                stop_idx=(i+1)*configs["data_kwargs"]["events_per_file"],
+                train_fraction=configs["data_kwargs"]["train_fraction"],
+                E_min=configs["data_kwargs"]["E_min"],
+            )
 
             file_loader = DataLoader(
                 file_dataset,
