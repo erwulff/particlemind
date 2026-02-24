@@ -15,7 +15,7 @@ from lightning import Trainer, seed_everything
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
-from src.datasets.colliderMLHits import colliderMLHits, ColliderMLHitsIndexed
+from src.datasets.colliderMLHits import colliderMLHits
 from src.datasets.Tokens import Tokens, TokensSingleFile
 from src.datasets.utils import Collater
 from src.models.backbone import BackboneNextTokenPredictionLightning
@@ -177,19 +177,19 @@ def main(args):
         )
 
 
-        # get the files
-        parquet_files = list(Path(configs["data_kwargs"]["data_dir"]).glob("*.parquet"))
-
-        for i, file in enumerate(parquet_files[configs["data_kwargs"]["start_files"]:configs["data_kwargs"]["stop_files"]]):
+        for i in range(configs["data_kwargs"]["num_files"]):
 
 
-            print("Analyzing file", file.name, f"(file {i})")
-            file_dataset = ColliderMLHitsIndexed(
+            file_name = f"collection_{i}.parquet"
+
+
+            print(f"Analyzing file {file_name}")
+            file_dataset = colliderMLHits(
                 configs["data_kwargs"]["subset"],
-                "val",
+                "train",
                 start_idx=i*configs["data_kwargs"]["events_per_file"],
                 stop_idx=(i+1)*configs["data_kwargs"]["events_per_file"],
-                train_fraction=configs["data_kwargs"]["train_fraction"],
+                train_fraction=1.0,
                 E_min=configs["data_kwargs"]["E_min"],
             )
 
@@ -202,8 +202,8 @@ def main(args):
             codes = embedder.tokenize_dataloader(file_loader, add_start_end_tokens=True)
 
             # Save
-            ak.to_parquet(codes, configs["data_kwargs"]["tokens_dir"] + "/" + file.name)
-            print("Saved out to", configs["data_kwargs"]["tokens_dir"] + "/" + file.name)
+            ak.to_parquet(codes, configs["data_kwargs"]["tokens_dir"] + "/" + file_name)
+            print("Saved out to", configs["data_kwargs"]["tokens_dir"] + "/" + file_name)
 
     if args.train_backbone:
         train_dataset = Tokens(

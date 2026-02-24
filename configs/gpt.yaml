@@ -1,5 +1,5 @@
 trainer_kwargs:
-  visible_devices: "0,1,2,3"
+  visible_devices: "0
   accumulate_grad_batches: 32
   max_epochs: 1
   precision: 16
@@ -7,7 +7,7 @@ trainer_kwargs:
   #limit_val_batches: 1000
 
 data_kwargs:
-  data_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/p8_ee_tt_ecm365_parquetfiles_train"
+  data_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/colliderML_parquetfiles"
   train_fraction: 0.8
   num_files: 50
   batch_size_per_gpu: 2
