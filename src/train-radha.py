@@ -129,12 +129,14 @@ def main(args):
             "train",
             nsamples=int(configs["data_kwargs"]["nsamples_total"]*configs["data_kwargs"]["train_fraction"]),
             train_fraction=configs["data_kwargs"]["train_fraction"],
+            E_min=configs["data_kwargs"]["E_min"],
         )
         val_dataset = colliderMLHits(
             configs["data_kwargs"]["subset"],
             "val",
             nsamples=int(configs["data_kwargs"]["nsamples_total"]*(1-configs["data_kwargs"]["train_fraction"])),
             train_fraction=configs["data_kwargs"]["train_fraction"],
+            E_min=configs["data_kwargs"]["E_min"],
         )
     
         train_loader = DataLoader(

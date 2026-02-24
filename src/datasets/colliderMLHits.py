@@ -35,6 +35,7 @@ class colliderMLHits(IterableDataset):
         split, 
         nsamples=None, 
         train_fraction=0.8, 
+        E_min=0,
     ):
         """
         Initialize the dataset by storing the paths to all parquet files in the specified folder.
@@ -47,6 +48,7 @@ class colliderMLHits(IterableDataset):
         self.split = split
         self.nsamples = nsamples
         self.train_fraction = train_fraction
+        self.E_min = E_min
         
 
 
@@ -108,16 +110,15 @@ class colliderMLHits(IterableDataset):
                 return
             sample_counter += 1
 
-            calo_hit_features = np.column_stack(
-                    (
-                        event["x"],
-                        event["y"],
-                        event["z"],
-                        event["total_energy"],
-                    )
-                )
+            x = np.array(event["x"])
+            y = np.array(event["y"])
+            z = np.array(event["z"])
+            energy = np.array(event["total_energy"])
 
-            hit_labels = event["detector"]
+            mask = energy >= self.E_min
+            calo_hit_features = np.column_stack((x[mask], y[mask], z[mask], energy[mask]))
+
+            hit_labels = np.array(event["detector"])[mask]
 
             yield {
                 # "gen_idx": gen_idx,
