@@ -408,6 +408,7 @@ class VQVAELightning(L.LightningModule):
         mask_particle = batch["mask"]
         labels = batch["hit_labels"]
 
+
     
 
 
@@ -770,14 +771,14 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
 
     # concatenate all events
     event_samples_E_concat = np.concatenate(event_samples_E)
-    event_samples_x_concat = np.concatenate(event_samples_x)
-    event_samples_y_concat = np.concatenate(event_samples_y)
-    event_samples_z_concat = np.concatenate(event_samples_z)
+    # event_samples_x_concat = np.concatenate(event_samples_x)
+    # event_samples_y_concat = np.concatenate(event_samples_y)
+    # event_samples_z_concat = np.concatenate(event_samples_z)
     reco_samples_E_concat = np.concatenate(reco_samples_E)
-    reco_samples_x_concat = np.concatenate(reco_samples_x)
-    reco_samples_y_concat = np.concatenate(reco_samples_y)
-    reco_samples_z_concat = np.concatenate(reco_samples_z)
-    labels_event_concat =  np.concatenate(labels_event)
+    # reco_samples_x_concat = np.concatenate(reco_samples_x)
+    # reco_samples_y_concat = np.concatenate(reco_samples_y)
+    # reco_samples_z_concat = np.concatenate(reco_samples_z)
+    # labels_event_concat =  np.concatenate(labels_event)
     z_e_concat = np.concatenate(z_e)
     z_q_concat = np.concatenate(z_q)
     idx_concat = np.concatenate(idx)

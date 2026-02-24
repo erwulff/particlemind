@@ -15,7 +15,7 @@ from lightning import Trainer, seed_everything
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
-from src.datasets.CLDHits import CLDHits, CLDHitsSingleFile
+from src.datasets.colliderMLHits import colliderMLHits
 from src.datasets.Tokens import Tokens, TokensSingleFile
 from src.datasets.utils import Collater
 from src.models.backbone import BackboneNextTokenPredictionLightning
@@ -124,18 +124,16 @@ def main(args):
     if args.train_embedder:
 
         # DATA
-        train_dataset = CLDHits(
-            configs["data_kwargs"]["data_dir"],
+        train_dataset = colliderMLHits(
+            configs["data_kwargs"]["subset"],
             "train",
-            nfiles=configs["data_kwargs"]["num_files"],
-            shuffle_files=True,
+            nsamples=int(configs["data_kwargs"]["nsamples_total"]*configs["data_kwargs"]["train_fraction"]),
             train_fraction=configs["data_kwargs"]["train_fraction"],
         )
-        val_dataset = CLDHits(
-            configs["data_kwargs"]["data_dir"],
+        val_dataset = colliderMLHits(
+            configs["data_kwargs"]["subset"],
             "val",
-            nfiles=configs["data_kwargs"]["num_files"],
-            shuffle_files=False,
+            nsamples=int(configs["data_kwargs"]["nsamples_total"]*(1-configs["data_kwargs"]["train_fraction"])),
             train_fraction=configs["data_kwargs"]["train_fraction"],
         )
     
@@ -143,13 +141,15 @@ def main(args):
             train_dataset,
             batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
-            num_workers=2,
+            num_workers=0,
+            #persistent_workers=True,
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
-            num_workers=2,
+            num_workers=0,
+            #persistent_workers=True,
         )
 
    
@@ -158,7 +158,7 @@ def main(args):
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
             model_kwargs=configs["model_kwargs"],
             model_type="VQVAENormFormer",
-            num_train_events=configs["data_kwargs"]["num_files"]*100*configs["data_kwargs"]["train_fraction"],
+            num_train_events=int(configs["data_kwargs"]["nsamples_total"]*configs["data_kwargs"]["train_fraction"]),
             batch_size_per_gpu=configs["data_kwargs"]["batch_size_per_gpu"],
             plot_dir_name=args.name
         )
@@ -300,7 +300,7 @@ if __name__ == "__main__":
 
     # VQVAE args
     parser.add_argument("--train_embedder", action="store_true", default=False)
-    parser.add_argument("--config_embedder", type=str, default="vqvae")
+    parser.add_argument("--config_embedder", type=str, default="vqvae_0")
 
     parser.add_argument(
         "--generate_tokenized_dataset", action="store_true", default=False
