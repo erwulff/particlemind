@@ -1,11 +1,5 @@
-data_kwargs:
-  n_events_per_file: 12
-  n_files: 5
-  batch_size: 2
-  tokens_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/colliderML_parquetfiles"
-  data_dir: "/pscratch/sd/r/rmastand/particlemind/data/generated_colliderML_parquetfiles"
 
 model_kwargs:
-  gpt_checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/gpt_training/best_models/gpt_test_val_loss_epoch=49.ckpt"
+  gpt_checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/gpt_training/best_models/gpt_test_val_loss_epoch=01.ckpt"
   embedder_checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=00-v15.ckpt"
 

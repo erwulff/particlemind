@@ -1,16 +1,11 @@
 trainer_kwargs:
-  visible_devices: "0
+  visible_devices: "0"
   accumulate_grad_batches: 32
-  max_epochs: 1
+  max_epochs: 2
   precision: 16
   #limit_train_batches: 4000
   #limit_val_batches: 1000
 
-data_kwargs:
-  data_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/colliderML_parquetfiles"
-  train_fraction: 0.8
-  num_files: 50
-  batch_size_per_gpu: 2
 
 model_kwargs:
   embedding_dim: 256

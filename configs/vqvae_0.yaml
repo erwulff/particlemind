@@ -1,19 +1,11 @@
 trainer_kwargs:
   visible_devices: "0"
-  accumulate_grad_batches: 32
-  max_epochs: 10
+  accumulate_grad_batches: 64
+  max_epochs: 20
   precision: 16-mixed
   #limit_train_batches: 18000
   #limit_val_batches: 4500
 
-
-data_kwargs:
-  subset: "default"
-  train_fraction: 0.8
-  batch_size_per_gpu: 2
-  nsamples_total: 5000
-  pad: 10000
-  E_min: 0.001
 
 model_kwargs:
   input_dim: 4 # DON'T CHANGE
@@ -23,7 +15,7 @@ model_kwargs:
   num_blocks: 2
   alpha: 5
   vq_kwargs: 
-    num_codes: 128
+    num_codes: 512
     beta: 0.9 
     kmeans_init: True
     norm: null

@@ -45,7 +45,9 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
         self,
         optimizer_kwargs={},
         lr_scheduler_kwargs = {"use_scheduler":False},
-        model_kwargs={},
+        model_kwargs={},        
+        num_train_events=None,
+        batch_size_per_gpu=0,
         token_dir=None,
         verbose=False,
         **kwargs,
@@ -76,6 +78,8 @@ class BackboneNextTokenPredictionLightning(L.LightningModule):
 
         self.validation_cnt = 0
         self.validation_output = {}
+        self.batch_size_per_gpu = batch_size_per_gpu
+        self.num_train_events = num_train_events
 
         self.backbone_weights_path = model_kwargs.get("backbone_weights_path", "None")
 

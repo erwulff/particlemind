@@ -9,7 +9,7 @@ def print_rank0(*args, **kwargs):
 
 def configure_optimizers_base(self):
     # --- Optimizer --- #
-    optimizer = torch.optim.AdamW(self.model.parameters(), **self.optimizer_kwargs)
+    optimizer = torch.optim.AdamW(self.parameters(), **self.optimizer_kwargs)
 
     # --- Scheduler --- #
     if self.lr_scheduler_kwargs.get("use_scheduler", False):

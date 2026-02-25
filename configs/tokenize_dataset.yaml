@@ -1,12 +1,4 @@
-data_kwargs:
-  tokens_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/colliderML_parquetfiles"
-  events_per_file: 100
-  batch_size_per_gpu: 2
-  num_files: 50
-  subset: "default"
-  batch_size: 10
-  pad: 10000
-  E_min: 0.001
+
 
 model_kwargs:
   checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=00-v15.ckpt"

@@ -39,6 +39,9 @@ def log_config(logger, args):
 
 def main(args):
     torch.multiprocessing.set_start_method('spawn')
+
+    with open(f"configs/{args.config_data}.yaml", "r") as file:
+        configs_data = yaml.safe_load(file)
     
     if args.train_embedder:
         project = "vqvae_training"
@@ -98,7 +101,13 @@ def main(args):
             verbose=1,
             auto_insert_metric_name=True,
         )
-        callbacks = [checkpoint_loss, lr_monitor]
+        checkpoint_last = ModelCheckpoint(
+            dirpath=f"{args.save_dir}/{project}/last_models/",
+            filename=f"{args.name}_last",
+            save_last=True,      # special flag to save the last model automatically
+            verbose=True,
+        )
+        callbacks = [checkpoint_loss, checkpoint_last, lr_monitor]
     
         trainer = Trainer(
             logger=logger,
@@ -125,31 +134,31 @@ def main(args):
 
         # DATA
         train_dataset = colliderMLHits(
-            configs["data_kwargs"]["subset"],
+            configs_data["subset"],
             "train",
-            nsamples=int(configs["data_kwargs"]["nsamples_total"]*configs["data_kwargs"]["train_fraction"]),
-            train_fraction=configs["data_kwargs"]["train_fraction"],
-            E_min=configs["data_kwargs"]["E_min"],
+            nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
+            train_fraction=configs_data["train_fraction"],
+            E_min=configs_data["E_min"],
         )
         val_dataset = colliderMLHits(
-            configs["data_kwargs"]["subset"],
+            configs_data["subset"],
             "val",
-            nsamples=int(configs["data_kwargs"]["nsamples_total"]*(1-configs["data_kwargs"]["train_fraction"])),
-            train_fraction=configs["data_kwargs"]["train_fraction"],
-            E_min=configs["data_kwargs"]["E_min"],
+            nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
+            train_fraction=configs_data["train_fraction"],
+            E_min=configs_data["E_min"],
         )
     
         train_loader = DataLoader(
             train_dataset,
-            batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
-            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
+            batch_size=configs_data["batch_size_per_gpu"],
+            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
             num_workers=0,
             #persistent_workers=True,
         )
         val_loader = DataLoader(
             val_dataset,
-            batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
-            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
+            batch_size=configs_data["batch_size_per_gpu"],
+            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
             num_workers=0,
             #persistent_workers=True,
         )
@@ -160,8 +169,8 @@ def main(args):
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
             model_kwargs=configs["model_kwargs"],
             model_type="VQVAENormFormer",
-            num_train_events=int(configs["data_kwargs"]["nsamples_total"]*configs["data_kwargs"]["train_fraction"]),
-            batch_size_per_gpu=configs["data_kwargs"]["batch_size_per_gpu"],
+            num_train_events=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
+            batch_size_per_gpu=configs_data["batch_size_per_gpu"],
             plot_dir_name=args.name
         )
 
@@ -177,7 +186,7 @@ def main(args):
         )
 
 
-        for i in range(configs["data_kwargs"]["num_files"]):
+        for i in range(configs_data["num_tokens_files"]):
 
 
             file_name = f"collection_{i}.parquet"
@@ -185,51 +194,51 @@ def main(args):
 
             print(f"Analyzing file {file_name}")
             file_dataset = colliderMLHits(
-                configs["data_kwargs"]["subset"],
+                configs_data["subset"],
                 "train",
-                start_idx=i*configs["data_kwargs"]["events_per_file"],
-                stop_idx=(i+1)*configs["data_kwargs"]["events_per_file"],
+                start_idx=i*configs_data["events_per_tokens_file"],
+                stop_idx=(i+1)*configs_data["events_per_tokens_file"],
                 train_fraction=1.0,
-                E_min=configs["data_kwargs"]["E_min"],
+                E_min=configs_data["E_min"],
             )
 
             file_loader = DataLoader(
                 file_dataset,
-                batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
-                collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs["data_kwargs"]["pad"]),
+                batch_size=configs_data["batch_size_tokenization"],
+                collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
                 num_workers=0, # must be zero otherwise events are duplicated
             )
             codes = embedder.tokenize_dataloader(file_loader, add_start_end_tokens=True)
 
             # Save
-            ak.to_parquet(codes, configs["data_kwargs"]["tokens_dir"] + "/" + file_name)
-            print("Saved out to", configs["data_kwargs"]["tokens_dir"] + "/" + file_name)
+            ak.to_parquet(codes, configs_data["tokens_dir"] + "/" + file_name)
+            print("Saved out to", configs_data["tokens_dir"] + "/" + file_name)
 
     if args.train_backbone:
         train_dataset = Tokens(
-            configs["data_kwargs"]["data_dir"],
+            configs_data["data_dir"],
             "train",
-            nfiles=configs["data_kwargs"]["num_files"],
+            nfiles=configs_data["num_files"],
             shuffle_files=True,
-            train_fraction=configs["data_kwargs"]["train_fraction"],
+            train_fraction=configs_data["train_fraction"],
         )
         val_dataset = Tokens(
-            configs["data_kwargs"]["data_dir"],
+            configs_data["data_dir"],
             "val",
-            nfiles=configs["data_kwargs"]["num_files"],
+            nfiles=configs_data["num_files"],
             shuffle_files=False,
-            train_fraction=configs["data_kwargs"]["train_fraction"],
+            train_fraction=configs_data["train_fraction"],
         )
 
         train_loader = DataLoader(
             train_dataset,
-            batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
+            batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
             num_workers=2,
         )
         val_loader = DataLoader(
             val_dataset,
-            batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
+            batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
             num_workers=2,
         )
@@ -240,6 +249,8 @@ def main(args):
             optimizer_kwargs=configs["optimizer_kwargs"],
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
             model_kwargs=configs["model_kwargs"],
+            num_train_events=int(configs_data["events_per_file"]*configs_data["num_files"]*configs_data["train_fraction"]),
+            batch_size_per_gpu=configs_data["batch_size_per_gpu"],
         )
 
         trainer.fit(model, train_loader, val_loader)
@@ -252,10 +263,10 @@ def main(args):
             checkpoint_path=configs["model_kwargs"]["gpt_checkpoint_path"],
         )
 
-        for file_id in range(configs["data_kwargs"]["n_files"]):
-            print(f"On file {file_id} of ({file_id + 1} of {configs["data_kwargs"]["n_files"]})...")
-            samples_tokens = gpt_backbone.generate_n_events_batched(configs["data_kwargs"]["n_events_per_file"], configs["data_kwargs"]["batch_size_per_gpu"])
-            ak.to_parquet(samples_tokens, configs["data_kwargs"]["tokens_dir"] + "/" + f"generated_{file_id}.parquet")
+        for file_id in range(configs_data["n_files"]):
+            print(f"On file {file_id} of ({file_id + 1} of {configs_data["n_files"]})...")
+            samples_tokens = gpt_backbone.generate_n_events_batched(configs_data["n_events_per_file"], configs_data["batch_size_per_gpu"])
+            ak.to_parquet(samples_tokens, configs_data["tokens_dir"] + "/" + f"generated_{file_id}.parquet")
 
      
         print("Done generating tokens!")
@@ -267,23 +278,23 @@ def main(args):
             checkpoint_path=configs["model_kwargs"]["embedder_checkpoint_path"],
         )
 
-        for file_id in range(configs["data_kwargs"]["n_files"]):
-            print(f"On file {file_id} of ({file_id + 1} of {configs["data_kwargs"]["n_files"]})...")
+        for file_id in range(configs_data["num_generated_files"]):
+            print(f"On file {file_id} of ({file_id + 1} of {configs_data["num_generated_files"]})...")
             
             tokens_dataset = TokensSingleFile(
-                configs["data_kwargs"]["tokens_dir"] + "/" + f"generated_{file_id}.parquet",
+                configs_data["tokens_dir"] + "/" + f"collection_{file_id}.parquet",
                 remove_start_stop_tokens=True,
             )
            
             tokens_loader = DataLoader(
                 tokens_dataset,
-                batch_size=configs["data_kwargs"]["batch_size_per_gpu"],
+                batch_size=configs_data["batch_size_per_gpu"],
                 collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
                 num_workers=0,
             )
 
             samples_events = embedder.reconstruct_ak_tokens(tokens_loader, hide_pbar=False)
-            ak.to_parquet(samples_events, configs["data_kwargs"]["data_dir"] + "/" + f"generated_{file_id}.parquet")
+            ak.to_parquet(samples_events, configs_data["generated_data_dir"] + "/" + f"generated_{file_id}.parquet")
 
         print("Done generating samples!")
 
@@ -306,6 +317,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument("--codes_dir", type=str, default="")
+    parser.add_argument("--config_data", type=str, default="data")
 
     # VQVAE args
     parser.add_argument("--train_embedder", action="store_true", default=False)
