@@ -1,5 +1,5 @@
 
 
 model_kwargs:
-  checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=00-v15.ckpt"
+  checkpoint_path: "/pscratch/sd/r/rmastand/particlemind/vqvae_training/best_models/embedder_test_val_loss_epoch=04.ckpt"
 

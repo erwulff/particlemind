@@ -3,12 +3,19 @@ import numpy as np
 
 import os
 from argparse import ArgumentParser
-
 import torch
-
 import yaml
-
 from pathlib import Path
+
+
+# Force Hugging Face datasets cache to local scratch (avoid NFS filelock hangs)
+os.environ["HF_DATASETS_CACHE"] = f"/tmp/{os.environ['USER']}/hf_datasets_cache"
+os.environ["HF_HOME"] = f"/tmp/{os.environ['USER']}/hf_home"
+
+# Disable file locks entirely for streaming datasets
+from datasets import config
+config.HF_ALLOW_TRUSTED_CODE = True
+config.USE_AUTH_TOKEN = False
 
 torch.cuda.empty_cache()
 from lightning import Trainer, seed_everything
@@ -216,16 +223,16 @@ def main(args):
 
     if args.train_backbone:
         train_dataset = Tokens(
-            configs_data["data_dir"],
+            configs_data["tokens_dir"],
             "train",
-            nfiles=configs_data["num_files"],
+            nfiles=configs_data["num_tokens_files"],
             shuffle_files=True,
             train_fraction=configs_data["train_fraction"],
         )
         val_dataset = Tokens(
-            configs_data["data_dir"],
+            configs_data["tokens_dir"],
             "val",
-            nfiles=configs_data["num_files"],
+            nfiles=configs_data["num_tokens_files"],
             shuffle_files=False,
             train_fraction=configs_data["train_fraction"],
         )
@@ -249,7 +256,7 @@ def main(args):
             optimizer_kwargs=configs["optimizer_kwargs"],
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
             model_kwargs=configs["model_kwargs"],
-            num_train_events=int(configs_data["events_per_file"]*configs_data["num_files"]*configs_data["train_fraction"]),
+            num_train_events=int(configs_data["events_per_tokens_file"]*configs_data["num_tokens_files"]*configs_data["train_fraction"]),
             batch_size_per_gpu=configs_data["batch_size_per_gpu"],
         )
 

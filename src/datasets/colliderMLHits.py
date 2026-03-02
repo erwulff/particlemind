@@ -73,8 +73,13 @@ class colliderMLHits(IterableDataset):
         # ----------------------------
         # Apply global start/stop slice
         # ----------------------------
-        start_i = self.start_idx or 0
-        dataset = itertools.islice(dataset, start_i, self.stop_idx)
+        #start_i = self.start_idx or 0
+
+        if self.start_idx is not None:
+            dataset = itertools.islice(dataset, self.start_idx, self.stop_idx)
+            start_i = self.start_idx
+        else:
+            start_i = 0
        
 
         # ----------------------------
