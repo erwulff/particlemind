@@ -41,84 +41,6 @@ vector.register_awkward()
 logger = logging.getLogger(__name__)
 
 
-class VQVAEMLP(torch.nn.Module):
-    def __init__(
-        self,
-        input_dim=2,
-        latent_dim=2,
-        encoder_layers=None,
-        decoder_layers=None,
-        vq_kwargs={},
-        **kwargs,
-    ):
-        """Initializes the VQ-VAE model.
-
-        Parameters
-        ----------
-        codebook_size : int, optional
-            The size of the codebook. The default is 8.
-        embed_dim : int, optional
-            The dimension of the embedding space. The default is 2.
-        input_dim : int, optional
-            The dimension of the input data. The default is 2.
-        encoder_layers : list, optional
-            List of integers representing the number of units in each encoder layer.
-            If None, a default encoder with a single linear layer is used. The default is None.
-        decoder_layers : list, optional
-            List of integers representing the number of units in each decoder layer.
-            If None, a default decoder with a single linear layer is used. The default is None.
-        """
-
-        super().__init__()
-        self.vq_kwargs = vq_kwargs
-        self.embed_dim = latent_dim
-        self.input_dim = input_dim  # for jet constituents, eta and phi
-
-        # --- Encoder --- #
-        if encoder_layers is None:
-            self.encoder = torch.nn.Linear(self.input_dim, self.embed_dim)
-        else:
-            enc_layers = []
-            enc_layers.append(torch.nn.Linear(self.input_dim, encoder_layers[0]))
-            enc_layers.append(torch.nn.ReLU())
-
-            for i in range(len(encoder_layers) - 1):
-                enc_layers.append(torch.nn.Linear(encoder_layers[i], encoder_layers[i + 1]))
-                enc_layers.append(torch.nn.ReLU())
-            enc_layers.append(torch.nn.Linear(encoder_layers[-1], self.embed_dim))
-
-            self.encoder = torch.nn.Sequential(*enc_layers)
-
-        # --- Vector-quantization layer --- #
-        self.vqlayer = VectorQuant(feature_size=self.embed_dim, **vq_kwargs)
-
-        # --- Decoder --- #
-        if decoder_layers is None:
-            self.decoder = torch.nn.Linear(self.embed_dim, self.input_dim)
-        else:
-            dec_layers = []
-            dec_layers.append(torch.nn.Linear(self.embed_dim, decoder_layers[0]))
-            dec_layers.append(torch.nn.ReLU())
-
-            for i in range(len(decoder_layers) - 1):
-                dec_layers.append(torch.nn.Linear(decoder_layers[i], decoder_layers[i + 1]))
-                dec_layers.append(torch.nn.ReLU())
-            dec_layers.append(torch.nn.Linear(decoder_layers[-1], self.input_dim))
-
-            self.decoder = torch.nn.Sequential(*dec_layers)
-
-        self.loss_history = []
-        self.lr_history = []
-
-    def forward(self, samples, mask=None):
-        # mask is there for compatibility with the transformer model
-        # encode
-        z_embed = self.encoder(samples)
-        # quantize
-        z_q2, vq_out = self.vqlayer(z_embed)
-        # decode
-        x_reco = self.decoder(z_q2)
-        return x_reco, vq_out
 
 
 class NormformerBlock(nn.Module):
@@ -239,49 +161,27 @@ class NormformerStack(torch.nn.Module):
         return x * mask.unsqueeze(-1)
 
 
-class VQVAETransformer(torch.nn.Module):
-    def __init__(
-        self,
-        input_dim,
-        latent_dim,
-        hidden_dim,
-        num_heads=1,
-        num_blocks=2,
-        vq_kwargs={},
-        **kwargs,
-    ):
-        super().__init__()
 
-        self.vq_kwargs = vq_kwargs
-        self.latent_dim = latent_dim
+def get_sinusoidal_positional_embedding(NUM_TOTAL_PATCHES, D_LATENT_SPACE):
 
-        self.encoder = Transformer(
-            input_dim=input_dim,
-            output_dim=latent_dim,
-            hidden_dim=hidden_dim,
-            num_heads=num_heads,
-            num_blocks=num_blocks,
-        )
-        self.vqlayer = VectorQuant(feature_size=latent_dim, **vq_kwargs)
-        self.decoder = Transformer(
-            input_dim=latent_dim,
-            output_dim=input_dim,
-            hidden_dim=hidden_dim,
-            num_heads=num_heads,
-            num_blocks=num_blocks,
-        )
-        self.loss_history = []
-        self.lr_history = []
+    """
+    output: (NUM_TOTAL_PATCHES, D_LATENT_SPACE)
+    """
 
-    def forward(self, x, mask):
-        # encode
-        x = self.encoder(x, mask=mask)
-        z_embed = x * mask.unsqueeze(-1)
-        # quantize
-        z, vq_out = self.vqlayer(z_embed)
-        # decode
-        x_reco = self.decoder(z, mask=mask)
-        return x_reco, vq_out
+    # Create a matrix of shape (max_len, embedding_dim)
+    positions = torch.arange(NUM_TOTAL_PATCHES).unsqueeze(1)  # Shape: (max_len, 1)
+    dimensions = torch.arange(D_LATENT_SPACE).unsqueeze(0)  # Shape: (1, embedding_dim)
+    
+    # Compute frequency terms
+    frequencies = 1 / (10000 ** (2 * (dimensions // 2) / D_LATENT_SPACE))
+    
+    # Compute sinusoidal values
+    encoding = torch.zeros((NUM_TOTAL_PATCHES, D_LATENT_SPACE))
+    encoding[:, 0::2] = torch.sin(positions * frequencies[:, 0::2])
+    encoding[:, 1::2] = torch.cos(positions * frequencies[:, 1::2])
+    
+    return encoding
+
 
 
 class VQVAENormFormer(torch.nn.Module):
@@ -296,6 +196,7 @@ class VQVAENormFormer(torch.nn.Module):
         num_heads=1,
         num_blocks=2,
         vq_kwargs={},
+        vit_kwargs={},
         **kwargs,
     ):
         super().__init__()
@@ -327,39 +228,38 @@ class VQVAENormFormer(torch.nn.Module):
         )
         self.output_projection = nn.Linear(hidden_dim, input_dim)
 
+        # ViT components
+        self.NUM_TOTAL_PATCHES = vit_kwargs["NUM_X_PATCHES"]*vit_kwargs["NUM_Y_PATCHES"]*vit_kwargs["NUM_Z_PATCHES"]
+        self.NUM_BINS_XYZ_PATCH = vit_kwargs["NUM_BINS_X_PATCH"]*vit_kwargs["NUM_BINS_Y_PATCH"]*vit_kwargs["NUM_BINS_Z_PATCH"]
+        self.linear_projection_encoder = torch.nn.Linear(self.NUM_BINS_XYZ_PATCH, vit_kwargs["D_LATENT_SPACE"])
+        self.linear_projection_decoder = torch.nn.Linear(vit_kwargs["D_LATENT_SPACE"], self.NUM_BINS_XYZ_PATCH)
+        self.positional_encoding = get_sinusoidal_positional_embedding(self.NUM_TOTAL_PATCHES, vit_kwargs["D_LATENT_SPACE"])
+
+
     def forward(self, x, mask):
+
+        # send through linear embedding to get shape (BATCH_SIZE, NUM_TOTAL_PATCHES, D_LATENT_SPACE)
+        e = self.linear_projection_encoder(x)     
+        # add positional embedding
+        e += self.positional_encoding.to(e.device)
+        
         # encode
-        x = self.input_projection(x)
-        x = self.encoder_normformer(x, mask=mask)
-        z_embed = self.latent_projection_in(x) * mask.unsqueeze(-1)
+        e = self.input_projection(e)
+        e = self.encoder_normformer(e, mask=mask)
+        z_embed = self.latent_projection_in(e) * mask.unsqueeze(-1)
         # quantize
         z, vq_out = self.vqlayer(z_embed)
         # decode
-        x_reco = self.latent_projection_out(z) * mask.unsqueeze(-1)
-        x_reco = self.decoder_normformer(x_reco, mask=mask)
-        x_reco = self.output_projection(x_reco) * mask.unsqueeze(-1)
-        return x_reco, vq_out
+        e_reco = self.latent_projection_out(z) * mask.unsqueeze(-1)
+        e_reco = self.decoder_normformer(e_reco, mask=mask)
+        e_reco = self.output_projection(e_reco) * mask.unsqueeze(-1)
 
+        
 
-def get_sinusoidal_positional_embedding():
+        # move from embedding space back to input space
+        x_reco = self.linear_projection_decoder(e_reco)
+        return e, e_reco, x, x_reco, vq_out
 
-    """
-    output: (NUM_TOTAL_PATCHES, latent_space_dim)
-    """
-
-    # Create a matrix of shape (max_len, embedding_dim)
-    positions = torch.arange(NUM_TOTAL_PATCHES).unsqueeze(1)  # Shape: (max_len, 1)
-    dimensions = torch.arange(D_LATENT_SPACE).unsqueeze(0)  # Shape: (1, embedding_dim)
-    
-    # Compute frequency terms
-    frequencies = 1 / (10000 ** (2 * (dimensions // 2) / D_LATENT_SPACE))
-    
-    # Compute sinusoidal values
-    encoding = torch.zeros((NUM_TOTAL_PATCHES, D_LATENT_SPACE))
-    encoding[:, 0::2] = torch.sin(positions * frequencies[:, 0::2])
-    encoding[:, 1::2] = torch.cos(positions * frequencies[:, 1::2])
-    
-    return encoding
 
 
 class VQVAELightning(L.LightningModule):
@@ -370,6 +270,7 @@ class VQVAELightning(L.LightningModule):
         optimizer_kwargs={},
         lr_scheduler_kwargs = {"use_scheduler":False},
         model_kwargs={},
+        vit_kwargs={},
         model_type="Transformer",
         num_train_events=0,
         batch_size_per_gpu=0,
@@ -384,7 +285,7 @@ class VQVAELightning(L.LightningModule):
         elif model_type == "Transformer":
             self.model = VQVAETransformer(**model_kwargs)
         elif model_type == "VQVAENormFormer":
-            self.model = VQVAENormFormer(**model_kwargs)
+            self.model = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs)
         else:
             raise ValueError(f"Unknown model type: {model_type}")
 
@@ -410,9 +311,9 @@ class VQVAELightning(L.LightningModule):
 
         self.plot_dir_name = plot_dir_name
 
-        self.linear_projection = torch.nn.Linear(NUM_BINS_XYZ_PATCH, D_LATENT_SPACE)
-        self.positional_encoding = get_sinusoidal_positional_embedding
+        self.vit_kwargs = vit_kwargs
 
+        
         
 
     def configure_optimizers(self):
@@ -421,41 +322,31 @@ class VQVAELightning(L.LightningModule):
 
 
     def forward(self, x_particle, mask_particle):
-        x_particle_reco, vq_out = self.model(x_particle, mask=mask_particle)
-        return x_particle_reco, vq_out
+
+
+        
+        embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out = self.model(x_particle, mask=mask_particle)
+
+        
+        return embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out
 
     def model_step(self, batch, return_x=False):
         """Perform a single model step on a batch of data."""
 
         # x_particle, mask_particle, labels = batch
-        x_particle = batch["calo_hit_features"] # (NUM_TOTAL_PATCHES, NUM_BINS_XYZ_PATCH)
+        x_particle = batch["calo_hit_features"] # (BATCH_SIZE, NUM_TOTAL_PATCHES, NUM_BINS_XYZ_PATCH)
         mask_particle = batch["mask"]
         labels = batch["hit_labels"]
 
+        embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
 
-        # send through linear embedding to get shape (NUM_TOTAL_PATCHES, latent_space_dim)
-        projection = self.linear_projectio(hist_inputs)
-    
-        # add positional embedding
-        projection +=  self.positional_encoding
-
-
-
-
-
-    
-
-
-        x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
-
-        reco_loss = ((x_particle_reco - x_particle) ** 2).mean()
+        reco_loss = ((x_particle - x_particle_reco) ** 2).mean()
         alpha = self.hparams["model_kwargs"]["alpha"]
         cmt_loss = vq_out["loss"]
-        code_idx = vq_out["q"]
         loss = reco_loss + alpha * cmt_loss
 
         if return_x:
-            return loss, x_particle, x_particle_reco, mask_particle, labels, code_idx
+            return loss, embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, mask_particle, labels, vq_out
 
         return loss
 
@@ -475,12 +366,6 @@ class VQVAELightning(L.LightningModule):
 
         return loss
 
-    """
-    def on_train_start(self) -> None:
-        self.preprocessing_dict = (
-            self.trainer.datamodule.hparams.dataset_kwargs_common.feature_dict
-        )
-    """
 
     def on_train_epoch_start(self):
         logger.info(f"Epoch {self.trainer.current_epoch} starting.")
@@ -512,15 +397,15 @@ class VQVAELightning(L.LightningModule):
         self.val_code_idx = []
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
-        loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
+        loss, embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, mask_particle, labels, vq_out= self.model_step(batch, return_x=True)
 
  
         # save the original and reconstructed data
-        self.val_x_original.append(x_original.detach().cpu().numpy())
-        self.val_x_reco.append(x_reco.detach().cpu().numpy())
-        self.val_mask.append(mask.detach().cpu().numpy())
-        self.val_labels.append(labels.detach().cpu().numpy())
-        self.val_code_idx.append(code_idx.detach().cpu().numpy())
+        # self.val_x_original.append(x_original.detach().cpu().numpy())
+        # self.val_x_reco.append(x_reco.detach().cpu().numpy())
+        # self.val_mask.append(mask.detach().cpu().numpy())
+        # self.val_labels.append(labels.detach().cpu().numpy())
+        # self.val_code_idx.append(vq_out["q"].detach().cpu().numpy())
 
         self.log("val_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
@@ -544,6 +429,7 @@ class VQVAELightning(L.LightningModule):
                 masks=batch["mask"],
                 labels=batch["hit_labels"],
                 device=self.device,
+                vit_kwargs=self.vit_kwargs,
                 saveas=plot_filename,
             )
             if comet_logger is not None:
@@ -559,14 +445,14 @@ class VQVAELightning(L.LightningModule):
         self.test_code_idx = []
 
     def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
-        loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
+        loss, x_original, x_reco, mask, labels, vq_out = self.model_step(batch, return_x=True)
 
         # save the original and reconstructed data
         self.test_x_original.append(x_original.detach().cpu().numpy())
         self.test_x_reco.append(x_reco.detach().cpu().numpy())
         self.test_mask.append(mask.detach().cpu().numpy())
         self.test_labels.append(labels.detach().cpu().numpy())
-        self.test_code_idx.append(code_idx.detach().cpu().numpy())
+        self.test_code_idx.append(vq_out["q"].detach().cpu().numpy())
 
         self.log("test_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
@@ -700,29 +586,7 @@ class VQVAELightning(L.LightningModule):
         return x_reco
 
 
-        
-    """
-    def on_validation_epoch_end(self) -> None:
-        # Lightning hook that is called when a validation epoch ends.
-
-        self.val_x_original_concat = np.concatenate(self.val_x_original)
-        self.val_x_reco_concat = np.concatenate(self.val_x_reco)
-        self.val_mask_concat = np.concatenate(self.val_mask)
-        self.val_labels_concat = np.concatenate(self.val_labels)
-        self.val_code_idx_concat = np.concatenate(self.val_code_idx)
-    """
-
-    """
-    def on_test_epoch_end(self):
-        self.test_x_original_concat = np.concatenate(self.test_x_original)
-        self.test_x_reco_concat = np.concatenate(self.test_x_reco)
-        self.test_mask_concat = np.concatenate(self.test_mask)
-        self.test_labels_concat = np.concatenate(self.test_labels)
-        self.test_code_idx_concat = np.concatenate(self.test_code_idx)
-    """
-
-
-def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_scatterpoints_to_plot=200, masks=None, saveas=None):
+def plot_model(model, input_data, labels, device="cuda", vit_kwargs={}, n_scatterpoints_to_plot=200, masks=None, saveas=None):
     """Visualize the model.
 
     Parameters
@@ -750,103 +614,38 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     with torch.no_grad():
         # print(f"Model device: {next(model.parameters()).device}")
         # print(f"Samples device: {samples.device}")
-        reco, vq_out = model(input_data, masks)
+        _, _, x_particle, x_particle_reco, vq_out  = model(input_data, masks)
         
-        master_z_q = vq_out["z_q"]
-        master_z_e = vq_out["z"]
-        master_idx = vq_out["q"]
+        master_z_q = vq_out["z_q"].squeeze(2) # (BATCH_SIZE, NUM_PATCHES, D_LATENT_VQ)
+        master_z_e = vq_out["z"].squeeze(2)
+        master_idx = vq_out["q"].squeeze(2)
 
         # move r, z_e, z_q, idx to cpu for plotting
-        reco = reco.detach().cpu().numpy()
         master_z_e = master_z_e.detach().cpu().numpy()
         master_z_q = master_z_q.detach().cpu().numpy()
         master_idx = master_idx.detach().cpu().numpy()
 
-    input_data = input_data.detach().cpu().numpy()
     labels = labels.detach().cpu().numpy()
     if masks is not None:
         masks = masks.detach().cpu().numpy()
 
-    event_samples_E, event_samples_x, event_samples_y,event_samples_z = [], [], [], []
-    reco_samples_E, reco_samples_x, reco_samples_y, reco_samples_z = [], [], [], []
-    labels_event = []
-    z_e, z_q, idx = [], [], []
 
-    for event in range(n_events_to_plot):
+    # concatenate for multi-event figures
+    z_q_concat = np.concatenate([master_z_q[i] for i in range(len(master_z_q))])
+    z_e_concat = np.concatenate([master_z_e[i] for i in range(len(master_z_e))])
+    idx_concat = np.concatenate([master_idx[i] for i in range(len(master_idx))])
 
-        if masks is not None:
-            mask = masks[event]
-            event_samples_E.append(input_data[event, :, 3][mask == 1])
-            event_samples_x.append(input_data[event, :, 0][mask == 1])
-            event_samples_y.append(input_data[event, :, 1][mask == 1])
-            event_samples_z.append(input_data[event, :, 2][mask == 1])
-            reco_samples_E.append(reco[event, :, 3][mask == 1])
-            reco_samples_x.append(reco[event, :, 0][mask == 1])
-            reco_samples_y.append(reco[event, :, 1][mask == 1])
-            reco_samples_z.append(reco[event, :, 2][mask == 1])
-            labels_event.append(labels[event][mask == 1])
-            z_e.append(master_z_e[event].squeeze(1)[mask == 1])
-            z_q.append(master_z_q[event].squeeze(1)[mask == 1])
-            idx.append(master_idx[event].squeeze(1)[mask == 1])
-
-        else:
-            event_samples_E.append(input_data[event, :, 3])
-            event_samples_x.append(input_data[event, :, 0])
-            event_samples_y.append(input_data[event, :, 1])
-            event_samples_z.append(input_data[event, :, 2])
-            reco_samples_E.append(reco[event, :, 3])
-            reco_samples_x.append(reco[event, :, 0])
-            reco_samples_y.append(reco[event, :, 1])
-            reco_samples_z.append(reco[event, :, 2])
-            labels_event.append(labels[event])
-            z_e.append(master_z_e[event].squeeze(1))
-            z_q.append(master_z_q[event].squeeze(1))
-            idx.append(master_idx[event].squeeze(1))
-
-    # concatenate all events
-    event_samples_E_concat = np.concatenate(event_samples_E)
-    # event_samples_x_concat = np.concatenate(event_samples_x)
-    # event_samples_y_concat = np.concatenate(event_samples_y)
-    # event_samples_z_concat = np.concatenate(event_samples_z)
-    reco_samples_E_concat = np.concatenate(reco_samples_E)
-    # reco_samples_x_concat = np.concatenate(reco_samples_x)
-    # reco_samples_y_concat = np.concatenate(reco_samples_y)
-    # reco_samples_z_concat = np.concatenate(reco_samples_z)
-    # labels_event_concat =  np.concatenate(labels_event)
-    z_e_concat = np.concatenate(z_e)
-    z_q_concat = np.concatenate(z_q)
-    idx_concat = np.concatenate(idx)
-
-   
-
-
+    
     #
     #
     # MULTI-EVENT FIGURES
     #
     #
     # create detached copy of the codebook to plot this
-    fig, axarr = plt.subplots(1, 7, figsize=(7*7, 7))
-
-    # histogram the energies
-    ax = axarr[0]
-    bins = np.linspace(np.min(event_samples_E_concat), np.max(event_samples_E_concat), 50)
-    ax.hist(event_samples_E_concat, bins=bins, label="samples", density=True, histtype="step", linewidth=2)
-    ax.hist(reco_samples_E_concat, bins=bins, label="reco", density=True, histtype="step", linewidth=2)
-    ax.set_yscale("log")
-    ax.set_xlabel("$E$")
-    ax.set_ylabel("Density")
-    ax.legend(loc="upper right")
-
-    # histogram the difference in energy
-    ax = axarr[1]
-    ax.hist((event_samples_E_concat - reco_samples_E_concat)/event_samples_E_concat, bins=50, density=True, histtype="step", linewidth=2)
-    ax.set_xlabel("$E_{true} - E_{reco}$ /$E_{true}$ ")
-    ax.set_ylabel("Density")
-    ax.set_yscale("log")
+    fig, axarr = plt.subplots(1, 3, figsize=(7*3, 7))
 
     # scatter some zq - ze
-    ax = axarr[2]
+    ax = axarr[0]
     ax.scatter(
         z_q_concat[:n_scatterpoints_to_plot, 0],
         z_q_concat[:n_scatterpoints_to_plot, 1],
@@ -867,7 +666,7 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     ax.set_title("Data space \nTrue vs reconstructed")
     ax.legend(loc="upper right")
 
-    ax = axarr[3]
+    ax = axarr[1]
     ax.scatter(
         z_q_concat[:n_scatterpoints_to_plot, 0],
         z_q_concat[:n_scatterpoints_to_plot, 2],
@@ -890,7 +689,7 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     # plot the histogram of the codebook indices (i.e. a codebook_size x codebook_size
     # histogram with each entry in the histogram corresponding to one sample associated
     # with the corresponding codebook entry)
-    ax = axarr[4]
+    ax = axarr[2]
     n_codes = model.vq_kwargs["num_codes"]
     bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
     ax.hist(idx_concat, bins=bins)
@@ -901,72 +700,23 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     )
 
     
-    """
-    ax = axarr[5]
-        # Make a 3d scatter plot for event and reconstructed samples in x, y, z
-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+    # # resolution (cluster energy)
+    # ax = axarr[5]
+    # unique_labels = [np.unique(l) for l in labels_event]
+    # hit_clusters_true, hit_clusters_reco = [], []
     
-    cmap = plt.get_cmap("gist_ncar")
-    colors = cmap(np.linspace(0, 1, len(unique_labels)))
+    # for event_i, labels_event_i in enumerate(labels_event):
+    #     for unique_label_event_i in unique_labels[event_i]:
+    #         mask_event_i_label_i = labels_event_i == unique_label_event_i
+    #         hit_clusters_true.append(np.sum(event_samples_E[event_i][mask_event_i_label_i]))
+    #         hit_clusters_reco.append(np.sum(reco_samples_E[event_i][mask_event_i_label_i]))
 
-    
-    ax = fig.add_subplot(1, 7,  6, projection='3d')
-    # plot event (true) samples, color-coded by label
-    hit_clusters_true, hit_clusters_reco = [], []
-    for i, label in enumerate(unique_labels):
-        mask = labels_event == label
-        ax.scatter(
-            event_samples_x[mask],
-            event_samples_y[mask],
-            event_samples_z[mask],
-            s=60,
-            alpha=0.8,
-            color=colors[i],
-            edgecolor="black",
-            linewidth=0.6,
-            marker="o",
-            label=f"label {label} (true)",
-        )
-
-        ax.scatter(
-            reco_samples_x[mask],
-            reco_samples_y[mask],
-            reco_samples_z[mask],
-            s=100,
-            alpha=0.9,
-            color="none",          # hollow, improves visibility
-            edgecolor=colors[i],
-            linewidth=1.5,
-            marker="o",
-            label=f"label {label} (reco)",
-        )
-
-
-    ax.set_xlabel("$x$")
-    ax.set_ylabel("$y$")
-    ax.set_zlabel("$z$")
-    #ax.legend(loc=(1,0))
-    ax.set_title("Hit spatial distribution")
-    """
-
-
-    # resolution (cluster energy)
-    ax = axarr[5]
-    unique_labels = [np.unique(l) for l in labels_event]
-    hit_clusters_true, hit_clusters_reco = [], []
-    
-    for event_i, labels_event_i in enumerate(labels_event):
-        for unique_label_event_i in unique_labels[event_i]:
-            mask_event_i_label_i = labels_event_i == unique_label_event_i
-            hit_clusters_true.append(np.sum(event_samples_E[event_i][mask_event_i_label_i]))
-            hit_clusters_reco.append(np.sum(reco_samples_E[event_i][mask_event_i_label_i]))
-
-    ax.hist((np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true), bins=50, density=True, histtype="step", linewidth=2)
-    ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{true}$ per cluster")
-    ax.set_ylabel("Density")
-    ax.set_yscale("log")
-    #ax.legend(loc="upper right")
+    # ax.hist((np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true), bins=50, density=True, histtype="step", linewidth=2)
+    # ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{true}$ per cluster")
+    # ax.set_ylabel("Density")
+    # ax.set_yscale("log")
+    # #ax.legend(loc="upper right")
 
 
     
@@ -986,86 +736,131 @@ def plot_model(model, input_data, labels, device="cuda", n_events_to_plot=2, n_s
     #
     #
 
-     # pull the first event for scatter plots
-    mask = masks[0]
-    single_event_samples_x = input_data[0, :, 0][mask == 1]
-    single_event_samples_y = input_data[0, :, 1][mask == 1]
-    single_event_samples_z = input_data[0, :, 2][mask == 1]
-    single_reco_samples_x = reco[0, :, 0][mask == 1]
-    single_reco_samples_y = reco[0, :, 1][mask == 1]
-    single_reco_samples_z = reco[0, :, 2][mask == 1]
+    # move back into physical space
+    x_particle_hist = (
+        x_particle[0].detach().cpu().numpy().reshape(
+            vit_kwargs["NUM_X_PATCHES"], vit_kwargs["NUM_Y_PATCHES"], vit_kwargs["NUM_Z_PATCHES"],
+            vit_kwargs["NUM_BINS_X_PATCH"], vit_kwargs["NUM_BINS_Y_PATCH"], vit_kwargs["NUM_BINS_Z_PATCH"]
+        )
+        .transpose(0, 3, 1, 4, 2, 5)   # undo the grouping
+        .reshape(
+            vit_kwargs["NUM_X_PATCHES"]*vit_kwargs["NUM_BINS_X_PATCH"],
+            vit_kwargs["NUM_Y_PATCHES"]*vit_kwargs["NUM_BINS_Y_PATCH"],
+            vit_kwargs["NUM_Z_PATCHES"]*vit_kwargs["NUM_BINS_Z_PATCH"]
+        )
+    )
+    x_particle_hist_reco = (
+        x_particle_reco[0].detach().cpu().numpy().reshape(
+            vit_kwargs["NUM_X_PATCHES"], vit_kwargs["NUM_Y_PATCHES"], vit_kwargs["NUM_Z_PATCHES"],
+            vit_kwargs["NUM_BINS_X_PATCH"], vit_kwargs["NUM_BINS_Y_PATCH"], vit_kwargs["NUM_BINS_Z_PATCH"]
+        )
+        .transpose(0, 3, 1, 4, 2, 5)   # undo the grouping
+        .reshape(
+            vit_kwargs["NUM_X_PATCHES"]*vit_kwargs["NUM_BINS_X_PATCH"],
+            vit_kwargs["NUM_Y_PATCHES"]*vit_kwargs["NUM_BINS_Y_PATCH"],
+            vit_kwargs["NUM_Z_PATCHES"]*vit_kwargs["NUM_BINS_Z_PATCH"]
+        )
+    )
 
-    bins_x = np.linspace(np.min(single_event_samples_x), np.max(single_event_samples_x), 100)
-    bins_y = np.linspace(np.min(single_event_samples_y), np.max(single_event_samples_y), 100)
-    bins_z = np.linspace(np.min(single_event_samples_z), np.max(single_event_samples_z), 100)
+    
 
     fig, axarr = plt.subplots(1, 6, figsize=(7*6, 6))
 
-    # data, x-y
+    # -------------------------
+    # x-y data
+    # -------------------------
     ax = axarr[0]
-    h = ax.hist2d(single_event_samples_x, single_event_samples_y, bins=[bins_x, bins_y], norm="log", density=True)
-    ax.set_xlabel("$x$")
-    ax.set_ylabel("$y$")
-    ax.set_title("Data")
-    # add colorbar axis
-    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
-        plt.colorbar(h[3], ax=ax)
+    im = ax.imshow(
+        np.sum(x_particle_hist, axis=2),
+        origin="lower",
+        extent=(-vit_kwargs["X_MAX"], vit_kwargs["X_MAX"],
+                -vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"]),
+    )
+    ax.set_title("Event - x-y plane (summed over z)")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    fig.colorbar(im, ax=ax, shrink=0.8)
 
-    # reco, x-y
+    # -------------------------
+    # x-y reco
+    # -------------------------
     ax = axarr[1]
-    h = ax.hist2d(single_reco_samples_x, single_reco_samples_y, bins=[bins_x, bins_y], norm="log", density=True)
-    ax.set_xlabel("$x$")
-    ax.set_ylabel("$y$")
-    ax.set_title("Reco")
-    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
-        plt.colorbar(h[3], ax=ax)
+    im = ax.imshow(
+        np.sum(x_particle_hist_reco, axis=2),
+        origin="lower",
+        extent=(-vit_kwargs["X_MAX"], vit_kwargs["X_MAX"],
+                -vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"]),
+    )
+    ax.set_title("Reco - x-y plane (summed over z)")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    fig.colorbar(im, ax=ax, shrink=0.8)
 
-    # data, x-z
+    # -------------------------
+    # x-z data
+    # -------------------------
     ax = axarr[2]
-    h = ax.hist2d(single_event_samples_x, single_event_samples_z, bins=[bins_x, bins_z], norm="log", density=True)
-    ax.set_xlabel("$x$")
-    ax.set_ylabel("$z$")
-    ax.set_title("Data")
-    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
-        plt.colorbar(h[3], ax=ax)
+    im = ax.imshow(
+        np.sum(x_particle_hist, axis=0),
+        origin="lower",
+        extent=(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"],
+                -vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"]),
+    )
+    ax.set_title("Event - x-z plane (summed over y)")
+    ax.set_xlabel("y")
+    ax.set_ylabel("z")
+    fig.colorbar(im, ax=ax, shrink=0.8)
 
-    # reco, x-z
+    # -------------------------
+    # x-z reco
+    # -------------------------
     ax = axarr[3]
-    h = ax.hist2d(single_reco_samples_x, single_reco_samples_z, bins=[bins_x, bins_z], norm="log", density=True)
-    ax.set_xlabel("$x$")
-    ax.set_ylabel("$z$")
-    ax.set_title("Reco")
-    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
-        plt.colorbar(h[3], ax=ax)
+    im = ax.imshow(
+        np.sum(x_particle_hist_reco, axis=0),
+        origin="lower",
+        extent=(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"],
+                -vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"]),
+    )
+    ax.set_title("Reco - x-z plane (summed over y)")
+    ax.set_xlabel("y")
+    ax.set_ylabel("z")
+    fig.colorbar(im, ax=ax, shrink=0.8)
 
-    # data, y-z
+    # -------------------------
+    # y-z data
+    # -------------------------
     ax = axarr[4]
-    h = ax.hist2d(single_event_samples_y, single_event_samples_z, bins=[bins_y, bins_z], norm="log", density=True)
-    ax.set_xlabel("$y$")
-    ax.set_ylabel("$z$")
-    ax.set_title("Data")
-    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
-        plt.colorbar(h[3], ax=ax)
+    im = ax.imshow(
+        np.sum(x_particle_hist, axis=1),
+        origin="lower",
+        extent=(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"],
+                -vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"]),
+    )
+    ax.set_title("Event - y-z plane (summed over x)")
+    ax.set_xlabel("y")
+    ax.set_ylabel("z")
+    fig.colorbar(im, ax=ax, shrink=0.8)
 
-    # reco, y-z
+    # -------------------------
+    # y-z reco
+    # -------------------------
     ax = axarr[5]
-    h = ax.hist2d(single_reco_samples_y, single_reco_samples_z, bins=[bins_y, bins_z], norm="log", density=True)
-    ax.set_xlabel("$y$")
-    ax.set_ylabel("$z$")
-    ax.set_title("Reco")
-    if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
-        plt.colorbar(h[3], ax=ax)
-
-
-    for ax in axarr.flatten():
-        if is_axes_empty(ax):
-            ax.set_visible(False)
-
+    im = ax.imshow(
+        np.sum(x_particle_hist_reco, axis=1),
+        origin="lower",
+        extent=(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"],
+                -vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"]),
+    )
+    ax.set_title("Reco - y-z plane (summed over x)")
+    ax.set_xlabel("y")
+    ax.set_ylabel("z")
+    fig.colorbar(im, ax=ax, shrink=0.8)
 
     fig.tight_layout()
     plt.show()
+
     if saveas is not None:
-        fig.savefig(saveas+"_single_event_figures.png")
+        fig.savefig(saveas + "_single_event_figures.png")
 
 
 

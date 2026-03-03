@@ -27,10 +27,13 @@ class colliderMLHits(IterableDataset):
         self.start_idx = start_idx
         self.stop_idx = stop_idx
 
+        self.vit_kwargs = vit_kwargs
+
         self.BINS_X = np.linspace(-vit_kwargs["X_MAX"], vit_kwargs["X_MAX"], vit_kwargs["NUM_X_PATCHES"]*vit_kwargs["NUM_BINS_X_PATCH"]+1) 
         self.BINS_Y = np.linspace(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"], vit_kwargs["NUM_Y_PATCHES"]*vit_kwargs["NUM_BINS_Y_PATCH"]+1)
         self.BINS_Z = np.linspace(-vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"], vit_kwargs["NUM_Z_PATCHES"]*vit_kwargs["NUM_BINS_Z_PATCH"]+1)
-
+        self.NUM_TOTAL_PATCHES = vit_kwargs["NUM_X_PATCHES"]*vit_kwargs["NUM_Y_PATCHES"]*vit_kwargs["NUM_Z_PATCHES"]
+        self.NUM_BINS_XYZ_PATCH = vit_kwargs["NUM_BINS_X_PATCH"]*vit_kwargs["NUM_BINS_Y_PATCH"]*vit_kwargs["NUM_BINS_Z_PATCH"]
 
     def _get_stream(self):
         return load_dataset(
@@ -132,25 +135,30 @@ class colliderMLHits(IterableDataset):
         
         
             # make a 3D histogram
-            hist, edges = np.histogramdd(np.column_stack((x, y, z)), bins=(BINS_X, BINS_Y, BINS_Z), density=True)
+            hist, edges = np.histogramdd(
+                np.column_stack((x, y, z)),
+                bins=(self.BINS_X, self.BINS_Y, self.BINS_Z),
+                weights=energy,        
+                density=True          
+            )
         
             # reshape to (NUM_TOTAL_PATCHES, NUM_BINS_XYZ_PATCH)
             hist_inputs = (
                 hist.reshape(
-                    NUM_X_PATCHES, NUM_BINS_X_PATCH,
-                    NUM_Y_PATCHES, NUM_BINS_Y_PATCH,
-                    NUM_Z_PATCHES, NUM_BINS_Z_PATCH
+                    self.vit_kwargs["NUM_X_PATCHES"], self.vit_kwargs["NUM_BINS_X_PATCH"],
+                    self.vit_kwargs["NUM_Y_PATCHES"], self.vit_kwargs["NUM_BINS_Y_PATCH"],
+                    self.vit_kwargs["NUM_Z_PATCHES"], self.vit_kwargs["NUM_BINS_Z_PATCH"]
                 )
                 .transpose(0, 2, 4, 1, 3, 5)   # group patch indices first
                 .reshape(
-                    NUM_TOTAL_PATCHES,
-                    NUM_BINS_XYZ_PATCH
+                    self.NUM_TOTAL_PATCHES,
+                    self.NUM_BINS_XYZ_PATCH
                 )
             )
 
-            hit_labels = np.array(event["detector"])[mask]
+            hit_labels = np.array(event["detector"])
 
             yield {
                 "hit_labels": hit_labels,
-                "calo_hit_features": hist,
+                "calo_hit_features": hist_inputs,
             }

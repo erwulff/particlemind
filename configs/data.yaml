@@ -1,24 +1,23 @@
 # training
 
-
 subset: "default"
 train_fraction: 0.8
-batch_size_per_gpu: 2
-E_min: 0.001
+batch_size_per_gpu: 256
 pad: 10000
 n_samples_total: 50000
 
 vit_kwargs:
   X_MAX: 3_500
   Y_MAX: 3_500
-  Z_MAX: 6_000
-  NUM_X_PATCHES: 5
-  NUM_Y_PATCHES: 5
-  NUM_Z_PATCHES: 5
-  NUM_BINS_X_PATCH: 6
-  NUM_BINS_Y_PATCH: 6
-  NUM_BINS_Z_PATCH: 6
-  D_LATENT_SPACE: 128
+  Z_MAX: 5_000
+  NUM_X_PATCHES: 12
+  NUM_Y_PATCHES: 12
+  NUM_Z_PATCHES: 12
+  NUM_BINS_X_PATCH: 10
+  NUM_BINS_Y_PATCH: 10
+  NUM_BINS_Z_PATCH: 10
+  D_LATENT_SPACE: 1024
+
 
 # tokens
 tokens_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/colliderML_parquetfiles"

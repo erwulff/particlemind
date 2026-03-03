@@ -143,16 +143,16 @@ def main(args):
         train_dataset = colliderMLHits(
             configs_data["subset"],
             "train",
+            vit_kwargs = configs_data["vit_kwargs"],
             nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
             train_fraction=configs_data["train_fraction"],
-            E_min=configs_data["E_min"],
         )
         val_dataset = colliderMLHits(
             configs_data["subset"],
             "val",
+            vit_kwargs = configs_data["vit_kwargs"],
             nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
             train_fraction=configs_data["train_fraction"],
-            E_min=configs_data["E_min"],
         )
     
         train_loader = DataLoader(
@@ -174,6 +174,7 @@ def main(args):
         model = VQVAELightning(
             optimizer_kwargs=configs["optimizer_kwargs"],
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
+            vit_kwargs = configs_data["vit_kwargs"],
             model_kwargs=configs["model_kwargs"],
             model_type="VQVAENormFormer",
             num_train_events=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
