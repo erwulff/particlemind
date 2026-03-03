@@ -15,8 +15,8 @@ batch_size_tokenization: 10
 
 # generated_data
 generated_data_dir: "/pscratch/sd/r/rmastand/particlemind/data/generated_colliderML_parquetfiles"
-events_per_generated_file: 12
-num_generated_files: 5
+events_per_generated_file: 20
+num_generated_files: 1
 batch_size_generation: 2
 
 
