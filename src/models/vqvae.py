@@ -341,6 +341,27 @@ class VQVAENormFormer(torch.nn.Module):
         return x_reco, vq_out
 
 
+def get_sinusoidal_positional_embedding():
+
+    """
+    output: (NUM_TOTAL_PATCHES, latent_space_dim)
+    """
+
+    # Create a matrix of shape (max_len, embedding_dim)
+    positions = torch.arange(NUM_TOTAL_PATCHES).unsqueeze(1)  # Shape: (max_len, 1)
+    dimensions = torch.arange(D_LATENT_SPACE).unsqueeze(0)  # Shape: (1, embedding_dim)
+    
+    # Compute frequency terms
+    frequencies = 1 / (10000 ** (2 * (dimensions // 2) / D_LATENT_SPACE))
+    
+    # Compute sinusoidal values
+    encoding = torch.zeros((NUM_TOTAL_PATCHES, D_LATENT_SPACE))
+    encoding[:, 0::2] = torch.sin(positions * frequencies[:, 0::2])
+    encoding[:, 1::2] = torch.cos(positions * frequencies[:, 1::2])
+    
+    return encoding
+
+
 class VQVAELightning(L.LightningModule):
     """PyTorch Lightning module for training a VQ-VAE."""
 
@@ -389,6 +410,9 @@ class VQVAELightning(L.LightningModule):
 
         self.plot_dir_name = plot_dir_name
 
+        self.linear_projection = torch.nn.Linear(NUM_BINS_XYZ_PATCH, D_LATENT_SPACE)
+        self.positional_encoding = get_sinusoidal_positional_embedding
+
         
 
     def configure_optimizers(self):
@@ -404,9 +428,19 @@ class VQVAELightning(L.LightningModule):
         """Perform a single model step on a batch of data."""
 
         # x_particle, mask_particle, labels = batch
-        x_particle = batch["calo_hit_features"]
+        x_particle = batch["calo_hit_features"] # (NUM_TOTAL_PATCHES, NUM_BINS_XYZ_PATCH)
         mask_particle = batch["mask"]
         labels = batch["hit_labels"]
+
+
+        # send through linear embedding to get shape (NUM_TOTAL_PATCHES, latent_space_dim)
+        projection = self.linear_projectio(hist_inputs)
+    
+        # add positional embedding
+        projection +=  self.positional_encoding
+
+
+
 
 
     

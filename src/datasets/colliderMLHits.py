@@ -6,30 +6,15 @@ import itertools
 import logging
 
 
-def standardize_calo_hit_features(calo_hit_features):
-    calo_hit_features[..., 0] /= 1e4
-    calo_hit_features[..., 1] /= 1e4
-    calo_hit_features[..., 2] /= 1e4
-    calo_hit_features[..., 3] = np.log(calo_hit_features[..., 3] * 1e2) / 10
-    return calo_hit_features
-
-
-def inverse_standardize_calo_hit_features(calo_hit_features):
-    calo_hit_features[..., 0] *= 1e4
-    calo_hit_features[..., 1] *= 1e4
-    calo_hit_features[..., 2] *= 1e4
-    calo_hit_features[..., 3] = np.exp(calo_hit_features[..., 3] * 10) / 1e2
-    return calo_hit_features
-
 
 class colliderMLHits(IterableDataset):
     def __init__(
         self,
         subset,
         split,
+        vit_kwargs,
         nsamples=None,
         train_fraction=0.8,
-        E_min=0.001,
         start_idx=None,
         stop_idx=None,
     ):
@@ -37,11 +22,14 @@ class colliderMLHits(IterableDataset):
         self.split = split
         self.nsamples = nsamples
         self.train_fraction = train_fraction
-        self.E_min = E_min
 
         # NEW
         self.start_idx = start_idx
         self.stop_idx = stop_idx
+
+        self.BINS_X = np.linspace(-vit_kwargs["X_MAX"], vit_kwargs["X_MAX"], vit_kwargs["NUM_X_PATCHES"]*vit_kwargs["NUM_BINS_X_PATCH"]+1) 
+        self.BINS_Y = np.linspace(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"], vit_kwargs["NUM_Y_PATCHES"]*vit_kwargs["NUM_BINS_Y_PATCH"]+1)
+        self.BINS_Z = np.linspace(-vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"], vit_kwargs["NUM_Z_PATCHES"]*vit_kwargs["NUM_BINS_Z_PATCH"]+1)
 
 
     def _get_stream(self):
@@ -141,18 +129,28 @@ class colliderMLHits(IterableDataset):
             z = np.array(event["z"], dtype=np.float32)
             energy = np.array(event["total_energy"], dtype=np.float32)
 
-
-
-            mask = energy >= self.E_min
-            if mask.sum() == 0:
-                continue
-
-            calo_hit_features = np.column_stack(
-                (x[mask], y[mask], z[mask], energy[mask])
+        
+        
+            # make a 3D histogram
+            hist, edges = np.histogramdd(np.column_stack((x, y, z)), bins=(BINS_X, BINS_Y, BINS_Z), density=True)
+        
+            # reshape to (NUM_TOTAL_PATCHES, NUM_BINS_XYZ_PATCH)
+            hist_inputs = (
+                hist.reshape(
+                    NUM_X_PATCHES, NUM_BINS_X_PATCH,
+                    NUM_Y_PATCHES, NUM_BINS_Y_PATCH,
+                    NUM_Z_PATCHES, NUM_BINS_Z_PATCH
+                )
+                .transpose(0, 2, 4, 1, 3, 5)   # group patch indices first
+                .reshape(
+                    NUM_TOTAL_PATCHES,
+                    NUM_BINS_XYZ_PATCH
+                )
             )
+
             hit_labels = np.array(event["detector"])[mask]
 
             yield {
                 "hit_labels": hit_labels,
-                "calo_hit_features": standardize_calo_hit_features(calo_hit_features),
+                "calo_hit_features": hist,
             }
