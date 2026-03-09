@@ -2,8 +2,8 @@
 
 subset: "default"
 train_fraction: 0.8
-batch_size_per_gpu: 256
-pad: 10000
+batch_size_per_gpu: 64
+pad: 2000
 n_samples_total: 50000
 
 vit_kwargs:
@@ -16,7 +16,7 @@ vit_kwargs:
   NUM_BINS_X_PATCH: 10
   NUM_BINS_Y_PATCH: 10
   NUM_BINS_Z_PATCH: 10
-  D_LATENT_SPACE: 1024
+  D_LATENT_SPACE: 512
 
 
 # tokens

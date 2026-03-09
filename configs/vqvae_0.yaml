@@ -1,6 +1,6 @@
 trainer_kwargs:
   visible_devices: "0"
-  accumulate_grad_batches: 1
+  accumulate_grad_batches: 4
   max_epochs: 20
   precision: 16-mixed
   #limit_train_batches: 18000
@@ -8,7 +8,7 @@ trainer_kwargs:
 
 
 model_kwargs:
-  input_dim: 1024 # should be the same as D_LATENT_SPACE in the data config
+  input_dim: 512 # should be the same as D_LATENT_SPACE in the data config
   latent_dim: 16
   hidden_dim: 128
   num_heads: 2

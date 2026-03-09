@@ -15,8 +15,12 @@ os.environ["HF_HOME"] = f"/tmp/{os.environ['USER']}/hf_home"
 # Disable file locks entirely for streaming datasets
 from datasets import config
 config.HF_ALLOW_TRUSTED_CODE = True
-config.USE_AUTH_TOKEN = False
+#config.USE_AUTH_TOKEN = False
 
+
+from huggingface_hub import login
+
+login(token=os.environ["HF_TOKEN"])
 torch.cuda.empty_cache()
 from lightning import Trainer, seed_everything
 from lightning.fabric.utilities.rank_zero import rank_zero_only
@@ -159,15 +163,17 @@ def main(args):
             train_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
-            num_workers=0,
-            #persistent_workers=True,
+            num_workers=4,
+            persistent_workers=True,
+            pin_memory=True,
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
-            num_workers=0,
-            #persistent_workers=True,
+            num_workers=4,
+            persistent_workers=True,
+            pin_memory=True,
         )
 
    
