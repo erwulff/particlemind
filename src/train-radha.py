@@ -163,7 +163,7 @@ def main(args):
             train_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
-            num_workers=4,
+            num_workers=configs_data["num_workers"],
             persistent_workers=True,
             pin_memory=True,
         )
@@ -171,7 +171,7 @@ def main(args):
             val_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
-            num_workers=4,
+            num_workers=configs_data["num_workers"],
             persistent_workers=True,
             pin_memory=True,
         )
@@ -248,13 +248,13 @@ def main(args):
             train_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
-            num_workers=2,
+            num_workers=configs_data["num_workers"],
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
-            num_workers=2,
+            num_workers=configs_data["num_workers"],
         )
 
 

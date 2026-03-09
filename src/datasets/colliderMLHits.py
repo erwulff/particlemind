@@ -70,12 +70,12 @@ class colliderMLHits(IterableDataset):
 
     def _get_stream(self):
         return load_dataset(
-            "OpenDataDetector/ColliderML-Release-1",
+            "CERN/ColliderML-Release-1",
             self.subset,
             split="train",
             streaming=True,
             
-            columns=["event_id", "detector", "total_energy", "x", "y", "z"],
+            columns=["detector", "total_energy", "x", "y", "z"],
         )
 
     def __len__(self):
@@ -117,7 +117,7 @@ class colliderMLHits(IterableDataset):
 
         for i, event in enumerate(dataset, start=start_i):
             
-            if not all(k in event for k in ["x", "y", "z", "total_energy"]):
+            if not all(k in event for k in ["x", "y", "z", "total_energy", "detector"]):
                 continue
 
             idx_in_split = i % 100
