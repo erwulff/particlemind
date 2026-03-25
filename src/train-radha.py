@@ -95,6 +95,15 @@ def main(args):
                 log_model="all",
             )
             log_config(logger, args)
+            for cfg_name in [
+                f"configs/{args.config_data}.yaml",
+                f"configs/{args.config_embedder}.yaml" if args.train_embedder else None,
+                f"configs/{args.config_gpt}.yaml" if args.train_backbone else None,
+                f"configs/{args.config_tokenizer}.yaml" if args.generate_tokenized_dataset else None,
+                f"configs/{args.config_generation}.yaml" if (args.generate_samples_tokens or args.generate_samples_events) else None,
+            ]:
+                if cfg_name is not None and os.path.exists(cfg_name):
+                    logger.experiment.save(cfg_name)
         elif args.logger == "tensorboard":
             logger = TensorBoardLogger(args.data_dir, name=args.name)
     
