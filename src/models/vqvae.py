@@ -402,8 +402,8 @@ class VQVAELightning(L.LightningModule):
 
 
     def augment_data(self, x):
-        aug = torch.normal(mean=torch.zeros_like(x), std=1e-6*torch.ones_like(x))
-        return x + aug # TODO
+        aug = torch.normal(mean=x, std=1e-2)
+        return aug 
 
     def contrastive_loss(self, z1, z2, temperature=0.1, alpha=1):
 
