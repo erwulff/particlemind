@@ -112,7 +112,7 @@ def main(args):
         checkpoint_loss = ModelCheckpoint(
             dirpath=f"{args.save_dir}/{project}/best_models/",
             filename=filename,
-            monitor="val_loss_epoch",
+            monitor="val/total_loss_epoch",
             mode="min",
             verbose=1,
             auto_insert_metric_name=True,
