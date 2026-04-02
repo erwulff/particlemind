@@ -3,21 +3,14 @@
 subset: "ttbar_pu0_calo_hits"
 train_fraction: 0.8
 batch_size_per_gpu: 64
-pad: 2000
+#pad: 2000
 n_samples_total: 50000
 num_workers: 2
 
+system: "HCAL"
+
 vit_kwargs:
-  X_MAX: 3_500
-  Y_MAX: 3_500
-  Z_MAX: 5_000
-  NUM_X_PATCHES: 12
-  NUM_Y_PATCHES: 12
-  NUM_Z_PATCHES: 12
-  NUM_BINS_X_PATCH: 10
-  NUM_BINS_Y_PATCH: 10
-  NUM_BINS_Z_PATCH: 10
-  D_LATENT_SPACE: 512
+  D_LATENT_SPACE: 128
 
 
 # tokens

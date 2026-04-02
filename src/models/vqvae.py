@@ -308,11 +308,16 @@ class VQVAENormFormer(torch.nn.Module):
         self.output_projection = nn.Linear(hidden_dim, input_dim)
 
         # ViT components
-        self.NUM_TOTAL_PATCHES = vit_kwargs["NUM_X_PATCHES"]*vit_kwargs["NUM_Y_PATCHES"]*vit_kwargs["NUM_Z_PATCHES"]
-        self.NUM_BINS_XYZ_PATCH = vit_kwargs["NUM_BINS_X_PATCH"]*vit_kwargs["NUM_BINS_Y_PATCH"]*vit_kwargs["NUM_BINS_Z_PATCH"]
-        self.linear_projection_encoder = torch.nn.Linear(self.NUM_BINS_XYZ_PATCH, vit_kwargs["D_LATENT_SPACE"])
-        self.linear_projection_decoder = torch.nn.Linear(vit_kwargs["D_LATENT_SPACE"], self.NUM_BINS_XYZ_PATCH)
-        self.positional_encoding = get_sinusoidal_positional_embedding(self.NUM_TOTAL_PATCHES, vit_kwargs["D_LATENT_SPACE"])
+
+        # each patch size needs its own linear encoder
+        self.linear_projection_encoders, self.linear_projection_decoders = {}, {}
+        for key in vit_kwargs["unique_patch_sizes_dict"].keys():
+            num_bins_in_patch = np.prod([k for k in key])
+            self.linear_projection_encoders[key] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_LATENT_SPACE"])
+            self.linear_projection_decoders[key] = torch.nn.Linear(vit_kwargs["D_LATENT_SPACE"], num_bins_in_patch)
+        
+       
+        self.positional_encoding = get_sinusoidal_positional_embedding(vit_kwargs["NUM_TOTAL_PATCHES"], vit_kwargs["D_LATENT_SPACE"])
 
 
     def forward(self, x, mask):
@@ -411,6 +416,8 @@ class VQVAELightning(L.LightningModule):
 
     def model_step(self, batch, return_x=False):
         """Perform a single model step on a batch of data."""
+
+        print(batch)
 
         # x_particle, mask_particle, labels = batch
         x_particle = batch["calo_hit_features"] # (BATCH_SIZE, NUM_TOTAL_PATCHES, NUM_BINS_XYZ_PATCH)

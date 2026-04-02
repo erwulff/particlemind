@@ -26,9 +26,12 @@ from lightning import Trainer, seed_everything
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
-from src.datasets.colliderMLHits import colliderMLHits
-from src.datasets.Tokens import Tokens, TokensSingleFile
-from src.datasets.utils import Collater
+from src.data.colliderMLHits import colliderMLHits
+
+from src.data.Tokens import Tokens, TokensSingleFile
+from src.data.patching import build_patch_registry
+
+from src.data.utils import Collater
 from src.models.backbone import BackboneNextTokenPredictionLightning
 
 # from src.models.vae import VAELightning, SSLLightning
@@ -143,18 +146,44 @@ def main(args):
      # MODEL
     if args.train_embedder:
 
+        # build the patch registry
+        with open(f"configs/detector_patching_params.yaml", "r") as file:
+            detector_patching_params = yaml.safe_load(file)[configs_data["system"]]
+            print_rank0(configs)
+
+        offsets = {}
+        for i in range(len(detector_patching_params["barrel_configs"]["cells_per_wedge"])):
+            offsets[i] = int((detector_patching_params["barrel_configs"]["cells_per_wedge"][i] - detector_patching_params["barrel_configs"]["cells_per_wedge"][0]) / 2)
+        
+        detector_patching_params["barrel_configs"]["offsets"] = offsets
+
+
+                    
+                
+        patch_registry, unique_patch_sizes_dict, NUM_TOTAL_PATCHES = build_patch_registry(detector_patching_params)
+        print(unique_patch_sizes_dict)
+        print(NUM_TOTAL_PATCHES)
+
+        vit_kwargs = configs_data["vit_kwargs"]
+        vit_kwargs["unique_patch_sizes_dict"] = unique_patch_sizes_dict
+        vit_kwargs["NUM_TOTAL_PATCHES"] = NUM_TOTAL_PATCHES
+        
+        
+
         # DATA
         train_dataset = colliderMLHits(
             configs_data["subset"],
             "train",
-            vit_kwargs = configs_data["vit_kwargs"],
+            patch_registry,
+            detector_patching_params,
             nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
             train_fraction=configs_data["train_fraction"],
         )
         val_dataset = colliderMLHits(
             configs_data["subset"],
             "val",
-            vit_kwargs = configs_data["vit_kwargs"],
+            patch_registry,
+            detector_patching_params,
             nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
             train_fraction=configs_data["train_fraction"],
         )
@@ -162,7 +191,7 @@ def main(args):
         train_loader = DataLoader(
             train_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
-            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
+            #collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
             num_workers=configs_data["num_workers"],
             persistent_workers=True,
             pin_memory=True,
@@ -170,7 +199,7 @@ def main(args):
         val_loader = DataLoader(
             val_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
-            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
+            #collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
             num_workers=configs_data["num_workers"],
             persistent_workers=True,
             pin_memory=True,
@@ -180,7 +209,7 @@ def main(args):
         model = VQVAELightning(
             optimizer_kwargs=configs["optimizer_kwargs"],
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
-            vit_kwargs = configs_data["vit_kwargs"],
+            vit_kwargs = vit_kwargs,
             model_kwargs=configs["model_kwargs"],
             model_type="VQVAENormFormer",
             num_train_events=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
