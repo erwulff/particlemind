@@ -79,7 +79,7 @@ class CollaterHits:
     """
 
     def __init__(self, empty_key, variable_size_keys="all", fixed_size_keys=None, pad=-1, **kwargs):
-        super(Collater, self).__init__(**kwargs)
+        super(CollaterHits, self).__init__(**kwargs)
         self.variable_size_keys = variable_size_keys
         self.fixed_size_keys = fixed_size_keys
         self.empty_key = empty_key

@@ -1,0 +1,28 @@
+# training
+
+subset: "ttbar_pu0_calo_hits"
+train_fraction: 0.8
+batch_size_per_gpu: 2
+n_samples_total: 50000
+num_workers: 2
+
+system: "HCAL"
+data_type: "patch"
+
+vit_kwargs:
+  D_EMBEDDING: 1024
+
+
+# tokens
+tokens_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/colliderML_parquetfiles"
+events_per_tokens_file: 1000
+num_tokens_files: 50
+batch_size_tokenization: 10
+
+# generated_data
+generated_data_dir: "/pscratch/sd/r/rmastand/particlemind/data/generated_colliderML_parquetfiles"
+events_per_generated_file: 20
+num_generated_files: 1
+batch_size_generation: 2
+
+
