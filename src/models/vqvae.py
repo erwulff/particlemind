@@ -20,6 +20,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from src.models.optimizers import configure_optimizers_base
+from src.datasets.augmentations import standardize_calo_hit_features_rphiz, augment_data
 
 
 
@@ -401,9 +402,6 @@ class VQVAELightning(L.LightningModule):
         return x_particle_reco, vq_out
 
 
-    def augment_data(self, x):
-        aug = torch.normal(mean=x, std=1e-2)
-        return aug 
 
     def contrastive_loss(self, z1, z2, temperature=0.1, alpha=1):
 
@@ -443,17 +441,23 @@ class VQVAELightning(L.LightningModule):
         # x_particle, mask_particle, labels = batch
         x_particle = batch["calo_hit_features"]
         mask_particle = batch["mask"]
-        labels = batch["hit_labels"]
-
-        x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
+        labels = batch["hit_labels"]   
         
         if beta != 0:
             # augment data
             x_particle_augmented = self.augment_data(x_particle)
-            x_particle_augmented, vq_out_augmented = self.forward(x_particle_augmented, mask_particle)
+            x_particle_augmented = standardize_calo_hit_features_rphiz(x_particle_augmented)
+            x_particle_augmented_reco, vq_out_augmented = self.forward(x_particle_augmented, mask_particle)
             ssl_loss = self.contrastive_loss(vq_out["z"], vq_out_augmented["z"])
         else:
             ssl_loss = 0
+
+        x_particle = standardize_calo_hit_features_rphiz(x_particle)
+
+        print(x_particle)
+        print(x_particle_augmented)
+        exit()
+        x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
 
         reco_loss = ((x_particle_reco - x_particle) ** 2).mean()
         
