@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Tuple
 import awkward as ak
+from collections import defaultdict
+
 
 
 import lightning as L
@@ -20,6 +22,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from src.models.optimizers import configure_optimizers_base
+from src.models.positional_encoding import DetectorPosEnc
 from src.datasets.augmentations import standardize_calo_hit_features_rphiz, augment_data
 
 
@@ -41,85 +44,6 @@ vector.register_awkward()
 
 logger = logging.getLogger(__name__)
 
-
-class VQVAEMLP(torch.nn.Module):
-    def __init__(
-        self,
-        input_dim=2,
-        latent_dim=2,
-        encoder_layers=None,
-        decoder_layers=None,
-        vq_kwargs={},
-        **kwargs,
-    ):
-        """Initializes the VQ-VAE model.
-
-        Parameters
-        ----------
-        codebook_size : int, optional
-            The size of the codebook. The default is 8.
-        embed_dim : int, optional
-            The dimension of the embedding space. The default is 2.
-        input_dim : int, optional
-            The dimension of the input data. The default is 2.
-        encoder_layers : list, optional
-            List of integers representing the number of units in each encoder layer.
-            If None, a default encoder with a single linear layer is used. The default is None.
-        decoder_layers : list, optional
-            List of integers representing the number of units in each decoder layer.
-            If None, a default decoder with a single linear layer is used. The default is None.
-        """
-
-        super().__init__()
-        self.vq_kwargs = vq_kwargs
-        self.embed_dim = latent_dim
-        self.input_dim = input_dim  # for jet constituents, eta and phi
-
-        # --- Encoder --- #
-        if encoder_layers is None:
-            self.encoder = torch.nn.Linear(self.input_dim, self.embed_dim)
-        else:
-            enc_layers = []
-            enc_layers.append(torch.nn.Linear(self.input_dim, encoder_layers[0]))
-            enc_layers.append(torch.nn.ReLU())
-
-            for i in range(len(encoder_layers) - 1):
-                enc_layers.append(torch.nn.Linear(encoder_layers[i], encoder_layers[i + 1]))
-                enc_layers.append(torch.nn.ReLU())
-            enc_layers.append(torch.nn.Linear(encoder_layers[-1], self.embed_dim))
-
-            self.encoder = torch.nn.Sequential(*enc_layers)
-
-        # --- Vector-quantization layer --- #
-        self.vqlayer = VectorQuant(feature_size=self.embed_dim, **vq_kwargs)
-
-        # --- Decoder --- #
-        if decoder_layers is None:
-            self.decoder = torch.nn.Linear(self.embed_dim, self.input_dim)
-        else:
-            dec_layers = []
-            dec_layers.append(torch.nn.Linear(self.embed_dim, decoder_layers[0]))
-            dec_layers.append(torch.nn.ReLU())
-
-            for i in range(len(decoder_layers) - 1):
-                dec_layers.append(torch.nn.Linear(decoder_layers[i], decoder_layers[i + 1]))
-                dec_layers.append(torch.nn.ReLU())
-            dec_layers.append(torch.nn.Linear(decoder_layers[-1], self.input_dim))
-
-            self.decoder = torch.nn.Sequential(*dec_layers)
-
-        self.loss_history = []
-        self.lr_history = []
-
-    def forward(self, samples, mask=None):
-        # mask is there for compatibility with the transformer model
-        # encode
-        z_embed = self.encoder(samples)
-        # quantize
-        z_q2, vq_out = self.vqlayer(z_embed)
-        # decode
-        x_reco = self.decoder(z_q2)
-        return x_reco, vq_out
 
 
 class NormformerBlock(nn.Module):
@@ -240,49 +164,6 @@ class NormformerStack(torch.nn.Module):
         return x * mask.unsqueeze(-1)
 
 
-class VQVAETransformer(torch.nn.Module):
-    def __init__(
-        self,
-        input_dim,
-        latent_dim,
-        hidden_dim,
-        num_heads=1,
-        num_blocks=2,
-        vq_kwargs={},
-        **kwargs,
-    ):
-        super().__init__()
-
-        self.vq_kwargs = vq_kwargs
-        self.latent_dim = latent_dim
-
-        self.encoder = Transformer(
-            input_dim=input_dim,
-            output_dim=latent_dim,
-            hidden_dim=hidden_dim,
-            num_heads=num_heads,
-            num_blocks=num_blocks,
-        )
-        self.vqlayer = VectorQuant(feature_size=latent_dim, **vq_kwargs)
-        self.decoder = Transformer(
-            input_dim=latent_dim,
-            output_dim=input_dim,
-            hidden_dim=hidden_dim,
-            num_heads=num_heads,
-            num_blocks=num_blocks,
-        )
-        self.loss_history = []
-        self.lr_history = []
-
-    def forward(self, x, mask):
-        # encode
-        x = self.encoder(x, mask=mask)
-        z_embed = x * mask.unsqueeze(-1)
-        # quantize
-        z, vq_out = self.vqlayer(z_embed)
-        # decode
-        x_reco = self.decoder(z, mask=mask)
-        return x_reco, vq_out
 
 
 class VQVAENormFormer(torch.nn.Module):
@@ -296,7 +177,8 @@ class VQVAENormFormer(torch.nn.Module):
         hidden_dim,
         num_heads=1,
         num_blocks=2,
-        vq_kwargs={},
+        vq_kwargs=None,
+        vit_kwargs=None,
         **kwargs,
     ):
         super().__init__()
@@ -319,7 +201,6 @@ class VQVAENormFormer(torch.nn.Module):
             num_blocks=self.num_blocks,
         )
         self.latent_projection_in = nn.Linear(self.hidden_dim, self.latent_dim)
-        self.vqlayer = VectorQuant(feature_size=self.latent_dim, **vq_kwargs)
         self.latent_projection_out = nn.Linear(self.latent_dim, self.hidden_dim)
         self.decoder_normformer = NormformerStack(
             hidden_dim=self.hidden_dim,
@@ -327,8 +208,103 @@ class VQVAENormFormer(torch.nn.Module):
             num_blocks=self.num_blocks,
         )
         self.output_projection = nn.Linear(hidden_dim, input_dim)
+        
+        if self.vq_kwargs is not None:
+          self.vqlayer = VectorQuant(feature_size=self.latent_dim, **vq_kwargs)
+          
+          
+        if self.vit_kwargs is not None:
 
-    def forward(self, x, mask):
+          # ViT components
+          # each patch size needs its own linear encoder
+          self.linear_projection_encoders, self.linear_projection_decoders = torch.nn.ModuleDict(), torch.nn.ModuleDict()
+          for key in vit_kwargs["unique_patch_sizes_dict"].keys():
+              num_bins_in_patch = np.prod([k for k in key])
+              self.linear_projection_encoders[str(key)] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_EMBEDDING"])
+              self.linear_projection_decoders[str(key)] = torch.nn.Linear(vit_kwargs["D_EMBEDDING"], num_bins_in_patch)
+
+
+          self.positional_encoding = DetectorPosEnc(
+              phi_max_per_r = vit_kwargs["n_phi_per_ring"],
+              n_z =  vit_kwargs["n_bins_z"],
+              d_latent = vit_kwargs["D_EMBEDDING"],
+          )        
+
+
+    def forward_vit(self, batch):
+
+        embeddings = []
+        global_patch_ids = []
+        local_patch_ids = []
+        mask = []
+        patch_group_sizes = []  # track how many patches per group, for splitting later
+    
+        # 1. encode each patch group
+        for key in sorted(batch.keys()):
+            key_str = str(key)
+
+         
+
+            emb = self.linear_projection_encoders[key_str](batch[key]["flat_tensor"])  # (B, P_k, D) P_k = num. patches per key. should have sum P_k = P
+            P_k = emb.shape[1]
+            embeddings.append(emb)
+            global_patch_ids.append(batch[key]["global_patch_ids"])
+            local_patch_ids.append(batch[key]["local_patch_ids"])
+            mask.append(batch[key]["mask"])
+            patch_group_sizes.append(P_k)
+
+        # 2. concatenate all patches
+        embeddings       = torch.cat(embeddings,       dim=1)  # (B, P_total, D)
+        global_patch_ids = torch.cat(global_patch_ids, dim=1)  # (B, P_total)
+        local_patch_ids  = torch.cat(local_patch_ids,  dim=1)  # (B, P_total, 3)
+        mask             = torch.cat(mask,             dim=1)  # (B, P_total)
+    
+        # 3. reorder all tensors by global patch id
+        order   = torch.argsort(global_patch_ids, dim=1)
+        order_D = order.unsqueeze(-1).expand_as(embeddings)
+        order_3 = order.unsqueeze(-1).expand_as(local_patch_ids)
+    
+        embeddings      = torch.gather(embeddings,      dim=1, index=order_D)
+        local_patch_ids = torch.gather(local_patch_ids, dim=1, index=order_3)
+        mask            = torch.gather(mask,            dim=1, index=order)
+    
+        # 4. add positional encoding
+        r_idx, phi_idx, z_idx = local_patch_ids[..., 0], local_patch_ids[..., 1], local_patch_ids[..., 2]
+
+        e = embeddings + self.positional_encoding(r_idx, phi_idx, z_idx)  # (B, P_total, D)
+
+    
+        # 5. encode → quantize → decode
+        e       = self.input_projection(e)
+        e       = self.encoder_normformer(e, mask=mask)
+        z_embed = self.latent_projection_in(e) * mask.unsqueeze(-1)
+
+
+
+
+            
+        z, vq_out = self.vqlayer(z_embed)
+
+        e_reco  = self.latent_projection_out(z) * mask.unsqueeze(-1)
+        e_reco  = self.decoder_normformer(e_reco, mask=mask)
+        e_reco  = self.output_projection(e_reco) * mask.unsqueeze(-1)
+    
+        # 6. undo the sort so patches line up with their original key groupings
+        # argsort of argsort gives the inverse permutation
+        inv_order = torch.argsort(order, dim=1)
+        e_reco_unordered = torch.gather(e_reco, dim=1, index=inv_order.unsqueeze(-1).expand_as(e_reco))
+    
+        # 7. split back by patch group and decode each with its own linear decoder
+        x_reco_chunks = {}
+        start = 0
+        for key, P_k in zip(sorted(batch.keys()), patch_group_sizes):
+            chunk = e_reco_unordered[:, start:start + P_k, :]      # (B, P_k, D)
+            x_reco_chunks[key] = self.linear_projection_decoders[str(key)](chunk)  # (B, P_k, bins_k)
+            start += P_k
+
+        return e, e_reco, {key:batch[key]["flat_tensor"] for key in batch.keys()}, x_reco_chunks, vq_out
+
+    def forward_hits(self, x, mask):
         # encode
         x = self.input_projection(x) # BS, num hits, hidden_dim
         x = self.encoder_normformer(x, mask=mask) # BS, num hits, hidden_dim
@@ -350,6 +326,7 @@ class VQVAELightning(L.LightningModule):
         optimizer_kwargs={},
         lr_scheduler_kwargs = {"use_scheduler":False},
         model_kwargs={},
+        vit_kwargs={},
         model_type="Transformer",
         num_train_events=0,
         batch_size_per_gpu=0,
@@ -364,7 +341,7 @@ class VQVAELightning(L.LightningModule):
         elif model_type == "Transformer":
             self.model = VQVAETransformer(**model_kwargs)
         elif model_type == "VQVAENormFormer":
-            self.model = VQVAENormFormer(**model_kwargs)
+            self.model = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs)
         else:
             raise ValueError(f"Unknown model type: {model_type}")
 
@@ -390,6 +367,9 @@ class VQVAELightning(L.LightningModule):
 
         self.plot_dir_name = plot_dir_name
 
+        self.vit_kwargs = vit_kwargs
+
+        
         
 
     def configure_optimizers(self):
@@ -397,9 +377,12 @@ class VQVAELightning(L.LightningModule):
 
 
 
-    def forward(self, x_particle, mask_particle):
-        x_particle_reco, vq_out = self.model(x_particle, mask=mask_particle)
-        return x_particle_reco, vq_out
+    def forward(self, batch):
+
+        
+        embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.model(batch)
+
+        return embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out
 
 
 
@@ -432,7 +415,9 @@ class VQVAELightning(L.LightningModule):
 
         return loss
 
-    def model_step(self, batch, return_x=False):
+   
+  
+  def model_step_vqvae(self, batch, return_x=False):
         """Perform a single model step on a batch of data."""
 
         alpha = self.hparams["model_kwargs"]["alpha"]
@@ -470,8 +455,10 @@ class VQVAELightning(L.LightningModule):
             return loss, reco_loss, cmt_loss, ssl_loss, x_particle, x_particle_reco, mask_particle, labels, code_idx
 
         return loss, reco_loss, cmt_loss, ssl_loss
-
-    def training_step(self, batch, batch_idx: int) -> torch.Tensor:
+  
+  
+  
+  def training_step_vqvae(self, batch, batch_idx: int) -> torch.Tensor:
         """Perform a single training step on a batch of data from the training set."""
         loss, reco_loss, cmt_loss, ssl_loss = self.model_step(batch)
 
@@ -510,13 +497,62 @@ class VQVAELightning(L.LightningModule):
             )
 
         return loss
+      
+      
+     def model_step_vit(self, batch, return_x=False):
+        """Perform a single model step on a batch of data."""
 
-    """
-    def on_train_start(self) -> None:
-        self.preprocessing_dict = (
-            self.trainer.datamodule.hparams.dataset_kwargs_common.feature_dict
-        )
-    """
+
+        embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.forward(batch)
+
+            
+
+        reco_loss = torch.stack([
+            ((patches_chunked[key] - patches_chunked_reco[key]) ** 2).mean()
+            for key in patches_chunked.keys()
+        ]).mean()
+
+        
+        alpha = self.hparams["model_kwargs"]["alpha"]
+        cmt_loss = vq_out["loss"]
+        loss = reco_loss + alpha * cmt_loss
+
+        if return_x:
+            return loss, reco_loss, cmt_loss, embedding_hit, embedding_hit_reco, batch, patches_chunked_reco, vq_out
+
+        return loss, reco_loss, cmt_loss
+
+    def training_step_vit(self, batch, batch_idx: int) -> torch.Tensor:
+        """Perform a single training step on a batch of data from the training set."""
+        loss, reco_loss, cmt_loss = self.model_step(batch)
+
+        self.train_loss_history.append(loss.detach().cpu().numpy())
+        self.log(
+                "train/total_loss",
+                loss,                # <-- pass the tensor, not loss.item()
+                on_step=True,
+                on_epoch=True,       # optional if you also want epoch avg
+                prog_bar=True,
+                sync_dist=True       # sync across GPUs
+            )
+        self.log(
+                "train/reco_loss",
+                reco_loss,                # <-- pass the tensor, not loss.item()
+                on_step=True,
+                on_epoch=True,       # optional if you also want epoch avg
+                prog_bar=True,
+                sync_dist=True       # sync across GPUs
+            )
+        self.log(
+                "train/cmt_loss",
+                cmt_loss,                # <-- pass the tensor, not loss.item()
+                on_step=True,
+                on_epoch=True,       # optional if you also want epoch avg
+                prog_bar=True,
+                sync_dist=True       # sync across GPUs
+            )
+
+        return loss
 
     def on_train_epoch_start(self):
         logger.info(f"Epoch {self.trainer.current_epoch} starting.")
@@ -548,15 +584,18 @@ class VQVAELightning(L.LightningModule):
         self.val_code_idx = []
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
+        loss, reco_loss, cmt_loss, embedding_hit, embedding_hit_reco, batch, patches_chunked_reco, vq_out = self.model_step(batch, return_x=True)
         loss, reco_loss, cmt_loss, ssl_loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
 
  
         # save the original and reconstructed data
-        self.val_x_original.append(x_original.detach().cpu().numpy())
-        self.val_x_reco.append(x_reco.detach().cpu().numpy())
-        self.val_mask.append(mask.detach().cpu().numpy())
-        self.val_labels.append(labels.detach().cpu().numpy())
-        self.val_code_idx.append(code_idx.detach().cpu().numpy())
+        # self.val_x_original.append(x_original.detach().cpu().numpy())
+        # self.val_x_reco.append(x_reco.detach().cpu().numpy())
+        # self.val_mask.append(mask.detach().cpu().numpy())
+        # self.val_labels.append(labels.detach().cpu().numpy())
+        # self.val_code_idx.append(vq_out["q"].detach().cpu().numpy())
+        
+        
 
         self.log("val/total_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
         self.log("val/reco_loss", reco_loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
@@ -578,11 +617,12 @@ class VQVAELightning(L.LightningModule):
             plot_filename = f"{plot_dir}/epoch{curr_epoch}_gstep{curr_step}"
             # log the plot
             plot_model(
-                self.model,
-                input_data=batch["calo_hit_features"],
-                masks=batch["mask"],
-                labels=batch["hit_labels"],
+                batch=batch,
+                patches_chunked_reco=patches_chunked_reco,
+                vq_out=vq_out,
+                num_codes=self.model.vq_kwargs["num_codes"],
                 device=self.device,
+                vit_kwargs=self.vit_kwargs,
                 saveas=plot_filename,
             )
             if comet_logger is not None:
@@ -598,14 +638,14 @@ class VQVAELightning(L.LightningModule):
         self.test_code_idx = []
 
     def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
-        loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
+        loss, x_original, x_reco, mask, labels, vq_out = self.model_step(batch, return_x=True)
 
         # save the original and reconstructed data
         self.test_x_original.append(x_original.detach().cpu().numpy())
         self.test_x_reco.append(x_reco.detach().cpu().numpy())
         self.test_mask.append(mask.detach().cpu().numpy())
         self.test_labels.append(labels.detach().cpu().numpy())
-        self.test_code_idx.append(code_idx.detach().cpu().numpy())
+        self.test_code_idx.append(vq_out["q"].detach().cpu().numpy())
 
         self.log("test_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
@@ -738,25 +778,4 @@ class VQVAELightning(L.LightningModule):
     
         return x_reco
 
-
-        
-    """
-    def on_validation_epoch_end(self) -> None:
-        # Lightning hook that is called when a validation epoch ends.
-
-        self.val_x_original_concat = np.concatenate(self.val_x_original)
-        self.val_x_reco_concat = np.concatenate(self.val_x_reco)
-        self.val_mask_concat = np.concatenate(self.val_mask)
-        self.val_labels_concat = np.concatenate(self.val_labels)
-        self.val_code_idx_concat = np.concatenate(self.val_code_idx)
-    """
-
-    """
-    def on_test_epoch_end(self):
-        self.test_x_original_concat = np.concatenate(self.test_x_original)
-        self.test_x_reco_concat = np.concatenate(self.test_x_reco)
-        self.test_mask_concat = np.concatenate(self.test_mask)
-        self.test_labels_concat = np.concatenate(self.test_labels)
-        self.test_code_idx_concat = np.concatenate(self.test_code_idx)
-    """
 

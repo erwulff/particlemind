@@ -1,6 +1,6 @@
 trainer_kwargs:
   visible_devices: "0"
-  accumulate_grad_batches: 64
+  accumulate_grad_batches: 32
   max_epochs: 20
   precision: 16-mixed
   #limit_train_batches: 18000
@@ -8,7 +8,6 @@ trainer_kwargs:
 
 
 model_kwargs:
-  input_dim: 4 # DON'T CHANGE
   latent_dim: 16
   hidden_dim: 128
   num_heads: 2
@@ -16,7 +15,7 @@ model_kwargs:
   alpha: 5
   beta: 1 # ssl 
   vq_kwargs: 
-    num_codes: 512
+    num_codes: 128
     beta: 0.9 
     kmeans_init: True
     norm: null

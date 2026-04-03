@@ -15,16 +15,23 @@ os.environ["HF_HOME"] = f"/tmp/{os.environ['USER']}/hf_home"
 # Disable file locks entirely for streaming datasets
 from datasets import config
 config.HF_ALLOW_TRUSTED_CODE = True
-config.USE_AUTH_TOKEN = False
+#config.USE_AUTH_TOKEN = False
 
+
+from huggingface_hub import login
+
+login(token=os.environ["HF_TOKEN"])
 torch.cuda.empty_cache()
 from lightning import Trainer, seed_everything
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
-from src.datasets.colliderMLHits import colliderMLHits
-from src.datasets.Tokens import Tokens, TokensSingleFile
-from src.datasets.utils import Collater
+from src.data.colliderMLHits import colliderMLHits
+
+from src.data.Tokens import Tokens, TokensSingleFile
+from src.data.patching import build_patch_registry
+
+from src.data.utils import Collater
 from src.models.backbone import BackboneNextTokenPredictionLightning
 
 # from src.models.vae import VAELightning, SSLLightning
@@ -56,24 +63,24 @@ def main(args):
             configs = yaml.safe_load(file)
             
             filename = f"embedder_{args.name}_val_loss_" + "{epoch:02d}"
-            print_rank0(configs)
+            #print_rank0(configs)
 
     elif args.generate_tokenized_dataset:
         with open(f"configs/{args.config_tokenizer}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print_rank0(configs)
+            #print_rank0(configs)
 
     elif args.train_backbone:
         project = "gpt_training"
         with open(f"configs/{args.config_gpt}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print_rank0(configs)
+            #print_rank0(configs)
             filename = f"gpt_{args.name}_val_loss_" + "{epoch:02d}"
 
     elif (args.generate_samples_tokens or args.generate_samples_events):
         with open(f"configs/{args.config_generation}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print_rank0(configs)
+            #print_rank0(configs)
 
     
 
@@ -148,41 +155,72 @@ def main(args):
      # MODEL
     if args.train_embedder:
 
+        # build the patch registry
+        with open(f"configs/detector_patching_params.yaml", "r") as file:
+            detector_patching_params = yaml.safe_load(file)[configs_data["system"]]
+            print_rank0(configs)
+
+        offsets = {}
+        for i in range(len(detector_patching_params["barrel_configs"]["cells_per_wedge"])):
+            offsets[i] = int((detector_patching_params["barrel_configs"]["cells_per_wedge"][i] - detector_patching_params["barrel_configs"]["cells_per_wedge"][0]) / 2)
+        
+        detector_patching_params["barrel_configs"]["offsets"] = offsets
+
+
+                    
+                
+        patch_registry, unique_patch_sizes_dict, NUM_TOTAL_PATCHES = build_patch_registry(detector_patching_params)
+
+        vit_kwargs = configs_data["vit_kwargs"]
+        vit_kwargs["unique_patch_sizes_dict"] = unique_patch_sizes_dict
+        vit_kwargs["NUM_TOTAL_PATCHES"] = NUM_TOTAL_PATCHES
+
+        # arguments for the positional encoding
+        vit_kwargs["n_phi_per_ring"] = patch_registry["n_phi_per_ring"]
+        vit_kwargs["n_bins_z"] = detector_patching_params["barrel_configs"]["n_bins_z"]
+        configs["model_kwargs"]["input_dim"] = configs_data["vit_kwargs"]["D_EMBEDDING"]
+        
+
         # DATA
         train_dataset = colliderMLHits(
             configs_data["subset"],
             "train",
+            patch_registry,
+            detector_patching_params,
             nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
             train_fraction=configs_data["train_fraction"],
-            E_min=configs_data["E_min"],
         )
         val_dataset = colliderMLHits(
             configs_data["subset"],
             "val",
+            patch_registry,
+            detector_patching_params,
             nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
             train_fraction=configs_data["train_fraction"],
-            E_min=configs_data["E_min"],
         )
     
         train_loader = DataLoader(
             train_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
-            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
-            num_workers=0,
-            #persistent_workers=True,
+            collate_fn=Collater(),
+            num_workers=configs_data["num_workers"],
+            persistent_workers=True,
+            pin_memory=True,
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
-            collate_fn=Collater(empty_key="calo_hit_features", variable_size_keys="all", pad=configs_data["pad"]),
-            num_workers=0,
-            #persistent_workers=True,
+            collate_fn=Collater(),
+            num_workers=configs_data["num_workers"],
+            persistent_workers=True,
+            pin_memory=True,
         )
 
    
         model = VQVAELightning(
             optimizer_kwargs=configs["optimizer_kwargs"],
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
+            vit_kwargs = vit_kwargs,
             model_kwargs=configs["model_kwargs"],
             model_type="VQVAENormFormer",
             num_train_events=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
@@ -250,13 +288,13 @@ def main(args):
             train_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
-            num_workers=2,
+            num_workers=configs_data["num_workers"],
         )
         val_loader = DataLoader(
             val_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=Collater(empty_key="token_features", variable_size_keys="all"),
-            num_workers=2,
+            num_workers=configs_data["num_workers"],
         )
 
 
