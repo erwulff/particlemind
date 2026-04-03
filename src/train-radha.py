@@ -11,6 +11,7 @@ from pathlib import Path
 # Force Hugging Face datasets cache to local scratch (avoid NFS filelock hangs)
 os.environ["HF_DATASETS_CACHE"] = f"/tmp/{os.environ['USER']}/hf_datasets_cache"
 os.environ["HF_HOME"] = f"/tmp/{os.environ['USER']}/hf_home"
+os.environ["HF_TOKEN"] = "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"
 
 # Disable file locks entirely for streaming datasets
 from datasets import config
