@@ -1,3 +1,6 @@
+import numpy as np
+import torch
+
 def standardize_calo_hit_features_xyz(calo_hit_features):
     calo_hit_features[..., 0] /= 1e4
     calo_hit_features[..., 1] /= 1e4
@@ -18,7 +21,7 @@ def standardize_calo_hit_features_rphiz(calo_hit_features):
     calo_hit_features[..., 0] /= 1e4
     calo_hit_features[..., 1] /= 1e1
     calo_hit_features[..., 2] /= 1e4
-    calo_hit_features[..., 3] = np.log(calo_hit_features[..., 3] * 1e2) / 10
+    calo_hit_features[..., 3] = torch.log(calo_hit_features[..., 3] * 1e2) / 10
     return calo_hit_features
 
 
@@ -33,6 +36,7 @@ def inverse_standardize_calo_hit_features_rphiz(calo_hit_features):
 
 def add_random_noise(x, std=1e-2):
     noise = torch.randn_like(x) * std
+    noise[..., 3] = torch.abs(noise[..., 3])
     return x + noise
 
 
@@ -64,7 +68,7 @@ def augment_data(x):
     # 1. random noise
     x = add_random_noise(x, std=1e-2)
 
-    # 2. global phi rotation
+    ## 2. global phi rotation
     x = global_phi_rotation(x)
 
     return x

@@ -167,13 +167,13 @@ def build_patch_registry(
     
 
     print(f"[Registry] {patch_id} total patches")
-    print(f"{tmp1} rings ")
-    print(f"{n_z_patches} z-bins")
-    print("ring: total number of phi patches ")
+    print(f"           {tmp1} rings ")
+    print(f"           {n_z_patches} z-bins")
+    print("           ring: total number of phi patches ")
     for r in sorted(registry["n_phi_per_ring"]):
         tmp2 = registry["n_phi_per_ring"][r]
         
-        print(f"   {r}: {tmp2}")
+        print(f"              {r}: {tmp2}")
 
     
     unique_patch_sizes = defaultdict(int)
