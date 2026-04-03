@@ -6,37 +6,6 @@ import itertools
 import logging
 
 
-def standardize_calo_hit_features_xyz(calo_hit_features):
-    calo_hit_features[..., 0] /= 1e4
-    calo_hit_features[..., 1] /= 1e4
-    calo_hit_features[..., 2] /= 1e4
-    calo_hit_features[..., 3] = np.log(calo_hit_features[..., 3] * 1e2) / 10
-    return calo_hit_features
-
-
-def inverse_standardize_calo_hit_features_xyz(calo_hit_features):
-    calo_hit_features[..., 0] *= 1e4
-    calo_hit_features[..., 1] *= 1e4
-    calo_hit_features[..., 2] *= 1e4
-    calo_hit_features[..., 3] = np.exp(calo_hit_features[..., 3] * 10) / 1e2
-    return calo_hit_features
-
-
-def standardize_calo_hit_features_rphiz(calo_hit_features):
-    calo_hit_features[..., 0] /= 1e4
-    calo_hit_features[..., 1] /= 1e1
-    calo_hit_features[..., 2] /= 1e4
-    calo_hit_features[..., 3] = np.log(calo_hit_features[..., 3] * 1e2) / 10
-    return calo_hit_features
-
-
-def inverse_standardize_calo_hit_features_rphiz(calo_hit_features):
-    calo_hit_features[..., 0] *= 1e4
-    calo_hit_features[..., 1] *= 1e1
-    calo_hit_features[..., 2] *= 1e4
-    calo_hit_features[..., 3] = np.exp(calo_hit_features[..., 3] * 10) / 1e2
-    return calo_hit_features
-
 
 
 class colliderMLHits(IterableDataset):
