@@ -237,6 +237,9 @@ class VQVAENormFormer(torch.nn.Module):
         # 1. encode each patch group
         for key in sorted(batch.keys()):
             key_str = str(key)
+
+         
+
             emb = self.linear_projection_encoders[key_str](batch[key]["flat_tensor"])  # (B, P_k, D) P_k = num. patches per key. should have sum P_k = P
             P_k = emb.shape[1]
             embeddings.append(emb)
@@ -262,15 +265,21 @@ class VQVAENormFormer(torch.nn.Module):
     
         # 4. add positional encoding
         r_idx, phi_idx, z_idx = local_patch_ids[..., 0], local_patch_ids[..., 1], local_patch_ids[..., 2]
+
         e = embeddings + self.positional_encoding(r_idx, phi_idx, z_idx)  # (B, P_total, D)
+
     
         # 5. encode → quantize → decode
         e       = self.input_projection(e)
         e       = self.encoder_normformer(e, mask=mask)
-        z_embed = self.latent_projection_in(e) # * mask.unsqueeze(-1)
-    
+        z_embed = self.latent_projection_in(e) * mask.unsqueeze(-1)
+
+
+
+
+            
         z, vq_out = self.vqlayer(z_embed)
-    
+
         e_reco  = self.latent_projection_out(z) * mask.unsqueeze(-1)
         e_reco  = self.decoder_normformer(e_reco, mask=mask)
         e_reco  = self.output_projection(e_reco) * mask.unsqueeze(-1)
@@ -363,6 +372,8 @@ class VQVAELightning(L.LightningModule):
 
 
         embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.forward(batch)
+
+            
 
         reco_loss = torch.stack([
             ((patches_chunked[key] - patches_chunked_reco[key]) ** 2).mean()
@@ -756,22 +767,37 @@ def plot_model(batch, patches_chunked_reco, vq_out, num_codes, device="cuda", vi
     E_true = np.concatenate(E_true_all)
     E_reco = np.concatenate(E_reco_all)
 
+    vmin = min(E_true.min(), E_reco.min())
+    vmax = max(E_true.max(), E_reco.max())
+
     # ✅ CHANGED: add extra panel for per-group histograms
     fig, axarr = plt.subplots(1, 7, figsize=(7*7, 6))  # CHANGED
 
-    def scatter_plot(ax, x, y, c, title):
-        sc = ax.scatter(x, y, c=c, s=10)
+    def scatter_plot(ax, x, y, c, title, vmin, vmax):
+        sc = ax.scatter(x, y, c=c, s=10, vmin=vmin, vmax=vmax)
         ax.set_title(title)
         plt.colorbar(sc, ax=ax, shrink=0.8)
 
-    scatter_plot(axarr[0], x, y, E_true, "True: r-phi")
-    scatter_plot(axarr[1], x, y, E_reco, "Reco: r-phi")
+    scatter_plot(axarr[0], x, y, E_true, "True: r-phi", vmin, vmax)
+    scatter_plot(axarr[1], x, y, E_reco, "Reco: r-phi", vmin, vmax)
+    axarr[0].set_xlabel("x")
+    axarr[0].set_ylabel("y")
+    axarr[1].set_xlabel("x")
+    axarr[1].set_ylabel("y")
 
-    scatter_plot(axarr[2], z, phi, E_true, "True: z-phi")
-    scatter_plot(axarr[3], z, phi, E_reco, "Reco: z-phi")
+    scatter_plot(axarr[2], z, phi, E_true, "True: z-phi", vmin, vmax)
+    scatter_plot(axarr[3], z, phi, E_reco, "Reco: z-phi", vmin, vmax)
+    axarr[2].set_xlabel("z")
+    axarr[2].set_ylabel("phi")
+    axarr[3].set_xlabel("z")
+    axarr[3].set_ylabel("phi")
 
-    scatter_plot(axarr[4], r, z, E_true, "True: r-z")
-    scatter_plot(axarr[5], r, z, E_reco, "Reco: r-z")
+    scatter_plot(axarr[4], r, z, E_true, "True: r-z", vmin, vmax)
+    scatter_plot(axarr[5], r, z, E_reco, "Reco: r-z", vmin, vmax)
+    axarr[4].set_xlabel("r")
+    axarr[4].set_ylabel("z")
+    axarr[5].set_xlabel("r")
+    axarr[5].set_ylabel("z")
 
     # ---------------------------------------
     # NEW: per-group resolution histogram
@@ -786,9 +812,8 @@ def plot_model(batch, patches_chunked_reco, vq_out, num_codes, device="cuda", vi
     ax.set_title("Resolution per patch group")
     ax.legend(fontsize=6)  # NEW
 
-    for ax in axarr:
-        ax.set_xlabel("coord 1")
-        ax.set_ylabel("coord 2")
+
+       
 
     fig.tight_layout()
     plt.show()
