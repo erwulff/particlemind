@@ -241,6 +241,7 @@ class NormformerStack(torch.nn.Module):
 
 
 
+# todo make 3d!!
 def get_sinusoidal_positional_embedding(NUM_TOTAL_PATCHES, D_LATENT_SPACE):
 
     """
@@ -310,21 +311,70 @@ class VQVAENormFormer(torch.nn.Module):
         # ViT components
 
         # each patch size needs its own linear encoder
-        self.linear_projection_encoders, self.linear_projection_decoders = {}, {}
+        self.linear_projection_encoders, self.linear_projection_decoders = torch.nn.ModuleDict(), torch.nn.ModuleDict()
         for key in vit_kwargs["unique_patch_sizes_dict"].keys():
             num_bins_in_patch = np.prod([k for k in key])
-            self.linear_projection_encoders[key] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_LATENT_SPACE"])
-            self.linear_projection_decoders[key] = torch.nn.Linear(vit_kwargs["D_LATENT_SPACE"], num_bins_in_patch)
+            self.linear_projection_encoders[str(key)] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_LATENT_SPACE"])
+            self.linear_projection_decoders[str(key)] = torch.nn.Linear(vit_kwargs["D_LATENT_SPACE"], num_bins_in_patch)
         
        
-        self.positional_encoding = get_sinusoidal_positional_embedding(vit_kwargs["NUM_TOTAL_PATCHES"], vit_kwargs["D_LATENT_SPACE"])
+        #self.positional_encoding = get_sinusoidal_positional_embedding(vit_kwargs["NUM_TOTAL_PATCHES"], vit_kwargs["D_LATENT_SPACE"])
 
 
-    def forward(self, x, mask):
+    def forward(self, x):
+
+        embeddings = []
+        global_patch_ids_all = []
+        local_patch_ids_all = []
+
+        # ------------------------------------------------------------
+        # 1. encode each patch group
+        # ------------------------------------------------------------
+
+
+        for key in sorted(x.keys()):  # IMPORTANT: deterministic order
+    
+            key_str = str(key)
+    
+            # encode
+            emb = self.linear_projection_encoders[key_str](x[key]["flat_tensor"])  # (B, P_k, D)
+    
+
+            embeddings.append(emb)
+            global_patch_ids_all.append(x[key]["global_patch_ids"])
+            local_patch_ids_all.append(x[key]["local_patch_ids"])
+    
+        # ------------------------------------------------------------
+        # 2. concatenate all patches
+        # ------------------------------------------------------------
+        embeddings = torch.cat(embeddings, dim=1)      # (B, TOTAL_PATCHES, D)
+        global_patch_ids_all = torch.cat(global_patch_ids_all, dim=1)  # (B, TOTAL_PATCHES)
+        local_patch_ids_all = torch.cat(local_patch_ids_all, dim=1)  # (B, TOTAL_PATCHES, 3)
+
+        print(embeddings.shape, global_patch_ids_all.shape, local_patch_ids_all.shape)
+
+    
+        # ------------------------------------------------------------
+        # 3. reorder using patch_ids
+        # ------------------------------------------------------------
+        # argsort gives indices that would sort patch_ids
+        order = torch.argsort(patch_ids_all, dim=1)  # (B, TOTAL_PATCHES)
+
+        
+        # expand for gather
+        order_expanded = order.unsqueeze(-1).expand(-1, -1, embeddings.shape[-1])
+    
+        e = torch.gather(embeddings, dim=1, index=order_expanded)
+        print(e)
+        # now e is (B, NUM_TOTAL_PATCHES, D) correctly ordered
+    
 
         # send through linear embedding to get shape (BATCH_SIZE, NUM_TOTAL_PATCHES, D_LATENT_SPACE)
         e = self.linear_projection_encoder(x)     
         # add positional embedding
+
+        # TODO POSITIONAL ENCODING
+        exit()
         e += self.positional_encoding.to(e.device)
         
         # encode
@@ -405,11 +455,11 @@ class VQVAELightning(L.LightningModule):
 
 
 
-    def forward(self, x_particle, mask_particle):
+    def forward(self, x_particle):
 
 
         
-        embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out = self.model(x_particle, mask=mask_particle)
+        embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out = self.model(x_particle)
 
         
         return embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out
@@ -417,14 +467,12 @@ class VQVAELightning(L.LightningModule):
     def model_step(self, batch, return_x=False):
         """Perform a single model step on a batch of data."""
 
-        print(batch)
-
+        
         # x_particle, mask_particle, labels = batch
-        x_particle = batch["calo_hit_features"] # (BATCH_SIZE, NUM_TOTAL_PATCHES, NUM_BINS_XYZ_PATCH)
-        mask_particle = batch["mask"]
-        labels = batch["hit_labels"]
+        #mask_particle = batch["mask"]
+        #labels = batch["hit_labels"]
 
-        embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
+        embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out = self.forward(batch)
 
         reco_loss = ((x_particle - x_particle_reco) ** 2).mean()
         alpha = self.hparams["model_kwargs"]["alpha"]

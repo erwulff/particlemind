@@ -378,7 +378,8 @@ def assign_hits_to_patches_barrel(
 
         result[p["patch_id"]] = {
             "cell_tensor" : np.zeros((n_layers_in_ring, cpp, n_z), dtype=np.float32),
-            "coords": np.array([p["r_center"], p["phi_center"], p["z_center"]], dtype=np.float32),  # CHANGED
+            "true_coords": np.array([p["r_center"], p["phi_center"], p["z_center"]], dtype=np.float32),  # CHANGED
+            "index_coords": np.array([p["r_idx"], p["phi_idx"], p["z_idx"]]),  # CHANGED
             "n_hits"      : 0,
         }
 
@@ -412,22 +413,23 @@ def assign_hits_to_patches_barrel(
     # CHANGED: group by shape
     grouped = defaultdict(lambda: {
         "flat_tensor": [],
-        "patch_ids": [],
+        "global_patch_ids": [],
+        "local_patch_ids": []
     })
     
-    for patch in result:
-        tensor = patch["cell_tensor"]
-        pid = patch["patch_id"]
-    
+    for patch_id in result.keys():
+        tensor = result[patch_id]["cell_tensor"]
         shape = tensor.shape  # (L, P, Z)
     
         grouped[shape]["flat_tensor"].append(tensor.reshape(-1))  # CHANGED: flatten here
-        grouped[shape]["patch_ids"].append(pid)
+        grouped[shape]["global_patch_ids"].append(patch_id)
+        grouped[shape]["local_patch_ids"].append(result[patch_id]["index_coords"].reshape(-1))
     
     # stack
     for shape in grouped:
-        grouped[shape]["flat_tensor"] = np.stack(grouped[shape]["flat_tensor"])
-        grouped[shape]["patch_ids"] = np.array(grouped[shape]["patch_ids"])
+        grouped[shape]["flat_tensor"] = np.stack(grouped[shape]["flat_tensor"]) # shape: n_patches, n_cells_in_patch
+        grouped[shape]["global_patch_ids"] = np.array(grouped[shape]["global_patch_ids"])
+        grouped[shape]["local_patch_ids"] = np.array(grouped[shape]["local_patch_ids"])
     
     return grouped
 

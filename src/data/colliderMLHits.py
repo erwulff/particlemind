@@ -121,8 +121,7 @@ class colliderMLHits(IterableDataset):
                 self.detector_patching_params
             ) 
 
-            print(output)
+        
 
-            yield_dict = {"hit_labels": hit_labels}
 
-            yield yield_dict
+            yield output
