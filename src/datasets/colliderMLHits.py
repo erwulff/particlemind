@@ -139,9 +139,6 @@ class colliderMLHits(IterableDataset):
             x = np.array(event["x"], dtype=np.float32)
             y = np.array(event["y"], dtype=np.float32)
             z = np.array(event["z"], dtype=np.float32)
-
-            r = np.sqrt(x**2 + y**2)
-            phi = np.atan2(y, x)
             energy = np.array(event["total_energy"], dtype=np.float32)
 
 
@@ -151,7 +148,7 @@ class colliderMLHits(IterableDataset):
                 continue
 
             calo_hit_features = np.column_stack(
-                (r[mask], phi[mask], z[mask], energy[mask])
+                (x[mask], y[mask], z[mask], energy[mask])
             )
             hit_labels = np.array(event["detector"])[mask]
 
