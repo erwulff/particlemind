@@ -8,7 +8,7 @@ from src.data.patching import assign_hits_to_patches_barrel
 
 
 
-class colliderMLHits(IterableDataset):
+class CaloPatchDataset(IterableDataset):
     def __init__(
         self,
         subset,

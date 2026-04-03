@@ -3,7 +3,7 @@ import torch
 from collections import defaultdict
 
 
-class Collater:
+class CollaterPatch:
     """
     Concatenate everything per key across batch.
     Fully ragged, no padding, no stacking.

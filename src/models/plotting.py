@@ -1,5 +1,5 @@
 
-def plot_model(batch, patches_chunked_reco, vq_out, num_codes, device="cuda", vit_kwargs={}, n_scatterpoints_to_plot=300, saveas=None):
+def plot_model_patch(batch, patches_chunked_reco, vq_out, num_codes, device="cuda", vit_kwargs={}, n_scatterpoints_to_plot=300, saveas=None):
 
     def is_axes_empty(ax):
         return not (ax.lines or ax.patches or ax.collections or ax.images or ax.texts or ax.artists or ax.tables)
