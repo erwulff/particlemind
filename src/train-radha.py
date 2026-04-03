@@ -63,24 +63,24 @@ def main(args):
             configs = yaml.safe_load(file)
             
             filename = f"embedder_{args.name}_val_loss_" + "{epoch:02d}"
-            print_rank0(configs)
+            #print_rank0(configs)
 
     elif args.generate_tokenized_dataset:
         with open(f"configs/{args.config_tokenizer}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print_rank0(configs)
+            #print_rank0(configs)
 
     elif args.train_backbone:
         project = "gpt_training"
         with open(f"configs/{args.config_gpt}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print_rank0(configs)
+            #print_rank0(configs)
             filename = f"gpt_{args.name}_val_loss_" + "{epoch:02d}"
 
     elif (args.generate_samples_tokens or args.generate_samples_events):
         with open(f"configs/{args.config_generation}.yaml", "r") as file:
             configs = yaml.safe_load(file)
-            print_rank0(configs)
+            #print_rank0(configs)
 
     
 
@@ -161,13 +161,15 @@ def main(args):
                     
                 
         patch_registry, unique_patch_sizes_dict, NUM_TOTAL_PATCHES = build_patch_registry(detector_patching_params)
-        print(unique_patch_sizes_dict)
-        print(NUM_TOTAL_PATCHES)
 
         vit_kwargs = configs_data["vit_kwargs"]
         vit_kwargs["unique_patch_sizes_dict"] = unique_patch_sizes_dict
         vit_kwargs["NUM_TOTAL_PATCHES"] = NUM_TOTAL_PATCHES
-        
+
+        # arguments for the positional encoding
+        vit_kwargs["n_phi_per_ring"] = patch_registry["n_phi_per_ring"]
+        vit_kwargs["n_bins_z"] = detector_patching_params["barrel_configs"]["n_bins_z"]
+        configs["model_kwargs"]["input_dim"] = configs_data["vit_kwargs"]["D_EMBEDDING"]
         
 
         # DATA

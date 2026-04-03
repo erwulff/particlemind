@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Tuple
 import awkward as ak
+from collections import defaultdict
+
 
 
 import lightning as L
@@ -20,6 +22,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from src.models.optimizers import configure_optimizers_base
+from src.models.positional_encoding import DetectorPosEnc
 
 
 
@@ -40,85 +43,6 @@ vector.register_awkward()
 
 logger = logging.getLogger(__name__)
 
-
-class VQVAEMLP(torch.nn.Module):
-    def __init__(
-        self,
-        input_dim=2,
-        latent_dim=2,
-        encoder_layers=None,
-        decoder_layers=None,
-        vq_kwargs={},
-        **kwargs,
-    ):
-        """Initializes the VQ-VAE model.
-
-        Parameters
-        ----------
-        codebook_size : int, optional
-            The size of the codebook. The default is 8.
-        embed_dim : int, optional
-            The dimension of the embedding space. The default is 2.
-        input_dim : int, optional
-            The dimension of the input data. The default is 2.
-        encoder_layers : list, optional
-            List of integers representing the number of units in each encoder layer.
-            If None, a default encoder with a single linear layer is used. The default is None.
-        decoder_layers : list, optional
-            List of integers representing the number of units in each decoder layer.
-            If None, a default decoder with a single linear layer is used. The default is None.
-        """
-
-        super().__init__()
-        self.vq_kwargs = vq_kwargs
-        self.embed_dim = latent_dim
-        self.input_dim = input_dim  # for jet constituents, eta and phi
-
-        # --- Encoder --- #
-        if encoder_layers is None:
-            self.encoder = torch.nn.Linear(self.input_dim, self.embed_dim)
-        else:
-            enc_layers = []
-            enc_layers.append(torch.nn.Linear(self.input_dim, encoder_layers[0]))
-            enc_layers.append(torch.nn.ReLU())
-
-            for i in range(len(encoder_layers) - 1):
-                enc_layers.append(torch.nn.Linear(encoder_layers[i], encoder_layers[i + 1]))
-                enc_layers.append(torch.nn.ReLU())
-            enc_layers.append(torch.nn.Linear(encoder_layers[-1], self.embed_dim))
-
-            self.encoder = torch.nn.Sequential(*enc_layers)
-
-        # --- Vector-quantization layer --- #
-        self.vqlayer = VectorQuant(feature_size=self.embed_dim, **vq_kwargs)
-
-        # --- Decoder --- #
-        if decoder_layers is None:
-            self.decoder = torch.nn.Linear(self.embed_dim, self.input_dim)
-        else:
-            dec_layers = []
-            dec_layers.append(torch.nn.Linear(self.embed_dim, decoder_layers[0]))
-            dec_layers.append(torch.nn.ReLU())
-
-            for i in range(len(decoder_layers) - 1):
-                dec_layers.append(torch.nn.Linear(decoder_layers[i], decoder_layers[i + 1]))
-                dec_layers.append(torch.nn.ReLU())
-            dec_layers.append(torch.nn.Linear(decoder_layers[-1], self.input_dim))
-
-            self.decoder = torch.nn.Sequential(*dec_layers)
-
-        self.loss_history = []
-        self.lr_history = []
-
-    def forward(self, samples, mask=None):
-        # mask is there for compatibility with the transformer model
-        # encode
-        z_embed = self.encoder(samples)
-        # quantize
-        z_q2, vq_out = self.vqlayer(z_embed)
-        # decode
-        x_reco = self.decoder(z_q2)
-        return x_reco, vq_out
 
 
 class NormformerBlock(nn.Module):
@@ -241,29 +165,6 @@ class NormformerStack(torch.nn.Module):
 
 
 
-# todo make 3d!!
-def get_sinusoidal_positional_embedding(NUM_TOTAL_PATCHES, D_LATENT_SPACE):
-
-    """
-    output: (NUM_TOTAL_PATCHES, D_LATENT_SPACE)
-    """
-
-    # Create a matrix of shape (max_len, embedding_dim)
-    positions = torch.arange(NUM_TOTAL_PATCHES).unsqueeze(1)  # Shape: (max_len, 1)
-    dimensions = torch.arange(D_LATENT_SPACE).unsqueeze(0)  # Shape: (1, embedding_dim)
-    
-    # Compute frequency terms
-    frequencies = 1 / (10000 ** (2 * (dimensions // 2) / D_LATENT_SPACE))
-    
-    # Compute sinusoidal values
-    encoding = torch.zeros((NUM_TOTAL_PATCHES, D_LATENT_SPACE))
-    encoding[:, 0::2] = torch.sin(positions * frequencies[:, 0::2])
-    encoding[:, 1::2] = torch.cos(positions * frequencies[:, 1::2])
-    
-    return encoding
-
-
-
 class VQVAENormFormer(torch.nn.Module):
     """This is basically just a re-factor of the VQVAETransformer class, but with more modular
     model components, making it easier to use some components in other models."""
@@ -314,85 +215,80 @@ class VQVAENormFormer(torch.nn.Module):
         self.linear_projection_encoders, self.linear_projection_decoders = torch.nn.ModuleDict(), torch.nn.ModuleDict()
         for key in vit_kwargs["unique_patch_sizes_dict"].keys():
             num_bins_in_patch = np.prod([k for k in key])
-            self.linear_projection_encoders[str(key)] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_LATENT_SPACE"])
-            self.linear_projection_decoders[str(key)] = torch.nn.Linear(vit_kwargs["D_LATENT_SPACE"], num_bins_in_patch)
+            self.linear_projection_encoders[str(key)] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_EMBEDDING"])
+            self.linear_projection_decoders[str(key)] = torch.nn.Linear(vit_kwargs["D_EMBEDDING"], num_bins_in_patch)
         
        
-        #self.positional_encoding = get_sinusoidal_positional_embedding(vit_kwargs["NUM_TOTAL_PATCHES"], vit_kwargs["D_LATENT_SPACE"])
+        self.positional_encoding = DetectorPosEnc(
+            phi_max_per_r = vit_kwargs["n_phi_per_ring"],
+            n_z =  vit_kwargs["n_bins_z"],
+            d_latent = vit_kwargs["D_EMBEDDING"],
+        )        
 
 
-    def forward(self, x):
+    def forward(self, batch):
 
         embeddings = []
-        global_patch_ids_all = []
-        local_patch_ids_all = []
-
-        # ------------------------------------------------------------
+        global_patch_ids = []
+        local_patch_ids = []
+        mask = []
+        patch_group_sizes = []  # track how many patches per group, for splitting later
+    
         # 1. encode each patch group
-        # ------------------------------------------------------------
-
-
-        for key in sorted(x.keys()):  # IMPORTANT: deterministic order
-    
+        for key in sorted(batch.keys()):
             key_str = str(key)
-    
-            # encode
-            emb = self.linear_projection_encoders[key_str](x[key]["flat_tensor"])  # (B, P_k, D)
-    
-
+            emb = self.linear_projection_encoders[key_str](batch[key]["flat_tensor"])  # (B, P_k, D) P_k = num. patches per key. should have sum P_k = P
+            P_k = emb.shape[1]
             embeddings.append(emb)
-            global_patch_ids_all.append(x[key]["global_patch_ids"])
-            local_patch_ids_all.append(x[key]["local_patch_ids"])
-    
-        # ------------------------------------------------------------
+            global_patch_ids.append(batch[key]["global_patch_ids"])
+            local_patch_ids.append(batch[key]["local_patch_ids"])
+            mask.append(batch[key]["mask"])
+            patch_group_sizes.append(P_k)
+
         # 2. concatenate all patches
-        # ------------------------------------------------------------
-        embeddings = torch.cat(embeddings, dim=1)      # (B, TOTAL_PATCHES, D)
-        global_patch_ids_all = torch.cat(global_patch_ids_all, dim=1)  # (B, TOTAL_PATCHES)
-        local_patch_ids_all = torch.cat(local_patch_ids_all, dim=1)  # (B, TOTAL_PATCHES, 3)
-
-        print(embeddings.shape, global_patch_ids_all.shape, local_patch_ids_all.shape)
-
+        embeddings       = torch.cat(embeddings,       dim=1)  # (B, P_total, D)
+        global_patch_ids = torch.cat(global_patch_ids, dim=1)  # (B, P_total)
+        local_patch_ids  = torch.cat(local_patch_ids,  dim=1)  # (B, P_total, 3)
+        mask             = torch.cat(mask,             dim=1)  # (B, P_total)
     
-        # ------------------------------------------------------------
-        # 3. reorder using patch_ids
-        # ------------------------------------------------------------
-        # argsort gives indices that would sort patch_ids
-        order = torch.argsort(patch_ids_all, dim=1)  # (B, TOTAL_PATCHES)
-
-        
-        # expand for gather
-        order_expanded = order.unsqueeze(-1).expand(-1, -1, embeddings.shape[-1])
+        # 3. reorder all tensors by global patch id
+        order   = torch.argsort(global_patch_ids, dim=1)
+        order_D = order.unsqueeze(-1).expand_as(embeddings)
+        order_3 = order.unsqueeze(-1).expand_as(local_patch_ids)
     
-        e = torch.gather(embeddings, dim=1, index=order_expanded)
-        print(e)
-        # now e is (B, NUM_TOTAL_PATCHES, D) correctly ordered
+        embeddings      = torch.gather(embeddings,      dim=1, index=order_D)
+        local_patch_ids = torch.gather(local_patch_ids, dim=1, index=order_3)
+        mask            = torch.gather(mask,            dim=1, index=order)
     
-
-        # send through linear embedding to get shape (BATCH_SIZE, NUM_TOTAL_PATCHES, D_LATENT_SPACE)
-        e = self.linear_projection_encoder(x)     
-        # add positional embedding
-
-        # TODO POSITIONAL ENCODING
-        exit()
-        e += self.positional_encoding.to(e.device)
-        
-        # encode
-        e = self.input_projection(e)
-        e = self.encoder_normformer(e, mask=mask)
-        z_embed = self.latent_projection_in(e) * mask.unsqueeze(-1)
-        # quantize
+        # 4. add positional encoding
+        r_idx, phi_idx, z_idx = local_patch_ids[..., 0], local_patch_ids[..., 1], local_patch_ids[..., 2]
+        e = embeddings + self.positional_encoding(r_idx, phi_idx, z_idx)  # (B, P_total, D)
+    
+        # 5. encode → quantize → decode
+        e       = self.input_projection(e)
+        e       = self.encoder_normformer(e, mask=mask)
+        z_embed = self.latent_projection_in(e) # * mask.unsqueeze(-1)
+    
         z, vq_out = self.vqlayer(z_embed)
-        # decode
-        e_reco = self.latent_projection_out(z) * mask.unsqueeze(-1)
-        e_reco = self.decoder_normformer(e_reco, mask=mask)
-        e_reco = self.output_projection(e_reco) * mask.unsqueeze(-1)
+    
+        e_reco  = self.latent_projection_out(z) * mask.unsqueeze(-1)
+        e_reco  = self.decoder_normformer(e_reco, mask=mask)
+        e_reco  = self.output_projection(e_reco) * mask.unsqueeze(-1)
+    
+        # 6. undo the sort so patches line up with their original key groupings
+        # argsort of argsort gives the inverse permutation
+        inv_order = torch.argsort(order, dim=1)
+        e_reco_unordered = torch.gather(e_reco, dim=1, index=inv_order.unsqueeze(-1).expand_as(e_reco))
+    
+        # 7. split back by patch group and decode each with its own linear decoder
+        x_reco_chunks = {}
+        start = 0
+        for key, P_k in zip(sorted(batch.keys()), patch_group_sizes):
+            chunk = e_reco_unordered[:, start:start + P_k, :]      # (B, P_k, D)
+            x_reco_chunks[key] = self.linear_projection_decoders[str(key)](chunk)  # (B, P_k, bins_k)
+            start += P_k
 
-        
-
-        # move from embedding space back to input space
-        x_reco = self.linear_projection_decoder(e_reco)
-        return e, e_reco, x, x_reco, vq_out
+        return e, e_reco, {key:batch[key]["flat_tensor"] for key in batch.keys()}, x_reco_chunks, vq_out
 
 
 
@@ -455,32 +351,31 @@ class VQVAELightning(L.LightningModule):
 
 
 
-    def forward(self, x_particle):
-
-
-        
-        embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out = self.model(x_particle)
+    def forward(self, batch):
 
         
-        return embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out
+        embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.model(batch)
+
+        return embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out
 
     def model_step(self, batch, return_x=False):
         """Perform a single model step on a batch of data."""
 
+
+        embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.forward(batch)
+
+        reco_loss = torch.stack([
+            ((patches_chunked[key] - patches_chunked_reco[key]) ** 2).mean()
+            for key in patches_chunked.keys()
+        ]).mean()
+
         
-        # x_particle, mask_particle, labels = batch
-        #mask_particle = batch["mask"]
-        #labels = batch["hit_labels"]
-
-        embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, vq_out = self.forward(batch)
-
-        reco_loss = ((x_particle - x_particle_reco) ** 2).mean()
         alpha = self.hparams["model_kwargs"]["alpha"]
         cmt_loss = vq_out["loss"]
         loss = reco_loss + alpha * cmt_loss
 
         if return_x:
-            return loss, embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, mask_particle, labels, vq_out
+            return loss, embedding_hit, embedding_hit_reco, batch, patches_chunked_reco, vq_out
 
         return loss
 
@@ -531,7 +426,7 @@ class VQVAELightning(L.LightningModule):
         self.val_code_idx = []
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
-        loss, embedding_hit, embedding_hit_reco, x_particle, x_particle_reco, mask_particle, labels, vq_out= self.model_step(batch, return_x=True)
+        loss, embedding_hit, embedding_hit_reco, batch, patches_chunked_reco, vq_out = self.model_step(batch, return_x=True)
 
  
         # save the original and reconstructed data
@@ -558,10 +453,10 @@ class VQVAELightning(L.LightningModule):
             plot_filename = f"{plot_dir}/epoch{curr_epoch}_gstep{curr_step}"
             # log the plot
             plot_model(
-                self.model,
-                input_data=batch["calo_hit_features"],
-                masks=batch["mask"],
-                labels=batch["hit_labels"],
+                batch=batch,
+                patches_chunked_reco=patches_chunked_reco,
+                vq_out=vq_out,
+                num_codes=self.model.vq_kwargs["num_codes"],
                 device=self.device,
                 vit_kwargs=self.vit_kwargs,
                 saveas=plot_filename,
@@ -720,282 +615,186 @@ class VQVAELightning(L.LightningModule):
         return x_reco
 
 
-def plot_model(model, input_data, labels, device="cuda", vit_kwargs={}, n_scatterpoints_to_plot=200, masks=None, saveas=None):
-    """Visualize the model.
+def plot_model(batch, patches_chunked_reco, vq_out, num_codes, device="cuda", vit_kwargs={}, n_scatterpoints_to_plot=300, saveas=None):
 
-    Parameters
-    ----------
-    model : nn.Module
-        The model.
-    samples : Tensor
-        The input data.
-    device : str, optional
-        Device to use. The default is "cuda".
-    n_examples_to_plot : int, optional
-        Number of examples to plot. The default is 200.
-    """
-
-    # make empty axes invisible
     def is_axes_empty(ax):
         return not (ax.lines or ax.patches or ax.collections or ax.images or ax.texts or ax.artists or ax.tables)
 
-
-    input_data = input_data.to(device)
-    model = model.to(device)
-   
-
-    # run the model on the input data
-    with torch.no_grad():
-        # print(f"Model device: {next(model.parameters()).device}")
-        # print(f"Samples device: {samples.device}")
-        _, _, x_particle, x_particle_reco, vq_out  = model(input_data, masks)
-        
-        master_z_q = vq_out["z_q"].squeeze(2) # (BATCH_SIZE, NUM_PATCHES, D_LATENT_VQ)
-        master_z_e = vq_out["z"].squeeze(2)
-        master_idx = vq_out["q"].squeeze(2)
-
-        # move r, z_e, z_q, idx to cpu for plotting
-        master_z_e = master_z_e.detach().cpu().numpy()
-        master_z_q = master_z_q.detach().cpu().numpy()
-        master_idx = master_idx.detach().cpu().numpy()
-
-    labels = labels.detach().cpu().numpy()
-    if masks is not None:
-        masks = masks.detach().cpu().numpy()
+    # -----------------------------
+    # LATENT + CODEBOOK (UNCHANGED)
+    # -----------------------------
+    master_z_q = vq_out["z_q"].squeeze(2).detach().cpu().numpy() # (B, P, LATENT_DIM)
+    master_z_e = vq_out["z"].squeeze(2).detach().cpu().numpy() # (B, P, LATENT_DIM)
+    master_idx = vq_out["q"].squeeze(2).detach().cpu().numpy() # (B, P) 
 
 
-    # concatenate for multi-event figures
-    z_q_concat = np.concatenate([master_z_q[i] for i in range(len(master_z_q))])
-    z_e_concat = np.concatenate([master_z_e[i] for i in range(len(master_z_e))])
-    idx_concat = np.concatenate([master_idx[i] for i in range(len(master_idx))])
 
-    
-    #
-    #
-    # MULTI-EVENT FIGURES
-    #
-    #
-    # create detached copy of the codebook to plot this
-    fig, axarr = plt.subplots(1, 3, figsize=(7*3, 7))
+    # flatten across all batches
+    z_q_concat = np.concatenate([master_z_q[i] for i in range(len(master_z_q))]) # (B*P, LATENT_DIM)
+    z_e_concat = np.concatenate([master_z_e[i] for i in range(len(master_z_e))]) # (B*P, LATENT_DIM)
+    idx_concat = np.concatenate([master_idx[i] for i in range(len(master_idx))]) # (B*P)
 
-    # scatter some zq - ze
+
+    # ✅ CHANGED: now 4 panels (added resolution)
+    fig, axarr = plt.subplots(1, 4, figsize=(7*4, 7))  # CHANGED
+
+    # scatter z_q vs z_e
     ax = axarr[0]
-    ax.scatter(
-        z_q_concat[:n_scatterpoints_to_plot, 0],
-        z_q_concat[:n_scatterpoints_to_plot, 1],
-        alpha=0.2,
-        s=26,
-        label="z_q",
-    )
-    ax.scatter(
-        z_e_concat[:n_scatterpoints_to_plot, 0],
-        z_e_concat[:n_scatterpoints_to_plot, 1],
-        alpha=0.7,
-        s=26,
-        marker="x",
-        label="z_e",
-    )
-    ax.set_xlabel("$x_0$")
-    ax.set_ylabel("$x_1$")
-    ax.set_title("Data space \nTrue vs reconstructed")
-    ax.legend(loc="upper right")
+    ind0, ind1 = 0, 1
+    ax.scatter(z_q_concat[:n_scatterpoints_to_plot, ind0],
+               z_q_concat[:n_scatterpoints_to_plot, ind1],
+               alpha=0.2, s=26, label="z_q")
+    ax.scatter(z_e_concat[:n_scatterpoints_to_plot, ind0],
+               z_e_concat[:n_scatterpoints_to_plot, ind1],
+               alpha=0.7, s=26, marker="x", label="z_e")
+    ax.set_xlabel(f"$x_{ind0}$")
+    ax.set_ylabel(f"$x_{ind1}$")
+    ax.set_title("Latent space: z_q vs z_e")
+    ax.legend()
 
     ax = axarr[1]
-    ax.scatter(
-        z_q_concat[:n_scatterpoints_to_plot, 0],
-        z_q_concat[:n_scatterpoints_to_plot, 2],
-        alpha=0.2,
-        s=26,
-        label="z_q",
-    )
-    ax.scatter(
-        z_e_concat[:n_scatterpoints_to_plot, 0],
-        z_e_concat[:n_scatterpoints_to_plot, 2],
-        alpha=0.7,
-        s=26,
-        marker="x",
-        label="z_e",
-    )
-    ax.set_xlabel("$x_0$")
-    ax.set_ylabel("$x_2$")
-    ax.set_title("Data space \nTrue vs reconstructed")
-    ax.legend(loc="upper right")
-    # plot the histogram of the codebook indices (i.e. a codebook_size x codebook_size
-    # histogram with each entry in the histogram corresponding to one sample associated
-    # with the corresponding codebook entry)
+    ind0, ind1 = 0, 2
+    ax.scatter(z_q_concat[:n_scatterpoints_to_plot, ind0],
+               z_q_concat[:n_scatterpoints_to_plot, ind1],
+               alpha=0.2, s=26, label="z_q")
+    ax.scatter(z_e_concat[:n_scatterpoints_to_plot, ind0],
+               z_e_concat[:n_scatterpoints_to_plot, ind1],
+               alpha=0.7, s=26, marker="x", label="z_e")
+    ax.set_xlabel(f"$x_{ind0}$")
+    ax.set_ylabel(f"$x_{ind1}$")
+    ax.set_title("Latent space: z_q vs z_e")
+    ax.legend()
+    
+    # codebook usage
     ax = axarr[2]
-    n_codes = model.vq_kwargs["num_codes"]
-    bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
+
+    bins = np.linspace(-0.5, num_codes + 0.5, num_codes + 1)
     ax.hist(idx_concat, bins=bins)
     ax.set_yscale("log")
-    ax.set_title(
-        "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that" " codebook entry)",
-        fontsize=8,
-    )
+    ax.set_title("Codebook usage")
+
+    # ---------------------------------------
+    # NEW: MULTI-EVENT ENERGY RESOLUTION
+    # ---------------------------------------
+    E_true_all, E_reco_all = {}, {}  # NEW
+
+    for key in batch.keys():  # NEW
+        flat_true = batch[key]["flat_tensor"].detach().cpu().numpy()
+        flat_reco = patches_chunked_reco[key].detach().cpu().numpy()
+
+        E_true = flat_true.sum(axis=2)
+        E_reco = flat_reco.sum(axis=2)
+
+        E_true_all[key] = np.nan_to_num(E_true.reshape(-1))
+        E_reco_all[key] = np.nan_to_num(E_reco.reshape(-1))
+
+ 
 
     
 
-    # # resolution (cluster energy)
-    # ax = axarr[5]
-    # unique_labels = [np.unique(l) for l in labels_event]
-    # hit_clusters_true, hit_clusters_reco = [], []
-    
-    # for event_i, labels_event_i in enumerate(labels_event):
-    #     for unique_label_event_i in unique_labels[event_i]:
-    #         mask_event_i_label_i = labels_event_i == unique_label_event_i
-    #         hit_clusters_true.append(np.sum(event_samples_E[event_i][mask_event_i_label_i]))
-    #         hit_clusters_reco.append(np.sum(reco_samples_E[event_i][mask_event_i_label_i]))
+    ax = axarr[3]  # NEW
+    for key in E_true_all.keys():
+        mask_nonzero = E_true_all[key] > 0
+        resolution = (E_reco_all[key][mask_nonzero] - E_true_all[key][mask_nonzero]) / E_true_all[key][mask_nonzero]
+        ax.hist(resolution, bins=100, histtype="step", linewidth=2, label=str(key))
+    plt.legend()
+    ax.set_xlabel(r"$(E_{reco} - E_{true}) / E_{true}$")
+    ax.set_ylabel("Counts")
+    ax.set_yscale("log")
+    ax.set_title("Energy resolution (per patch)")
 
-    # ax.hist((np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true), bins=50, density=True, histtype="step", linewidth=2)
-    # ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{true}$ per cluster")
-    # ax.set_ylabel("Density")
-    # ax.set_yscale("log")
-    # #ax.legend(loc="upper right")
-
-
-    
     for ax in axarr.flatten():
         if is_axes_empty(ax):
             ax.set_visible(False)
 
-
     fig.tight_layout()
     plt.show()
+
     if saveas is not None:
         fig.savefig(saveas+"_multi_event_figures.png")
 
-    #
-    #
-    # SINGLE EVENT FIGURES
-    #
-    #
+    # -----------------------------
+    # SINGLE EVENT (UPDATED)
+    # -----------------------------
 
-    # move back into physical space
-    x_particle_hist = (
-        x_particle[0].detach().cpu().numpy().reshape(
-            vit_kwargs["NUM_X_PATCHES"], vit_kwargs["NUM_Y_PATCHES"], vit_kwargs["NUM_Z_PATCHES"],
-            vit_kwargs["NUM_BINS_X_PATCH"], vit_kwargs["NUM_BINS_Y_PATCH"], vit_kwargs["NUM_BINS_Z_PATCH"]
-        )
-        .transpose(0, 3, 1, 4, 2, 5)   # undo the grouping
-        .reshape(
-            vit_kwargs["NUM_X_PATCHES"]*vit_kwargs["NUM_BINS_X_PATCH"],
-            vit_kwargs["NUM_Y_PATCHES"]*vit_kwargs["NUM_BINS_Y_PATCH"],
-            vit_kwargs["NUM_Z_PATCHES"]*vit_kwargs["NUM_BINS_Z_PATCH"]
-        )
-    )
-    x_particle_hist_reco = (
-        x_particle_reco[0].detach().cpu().numpy().reshape(
-            vit_kwargs["NUM_X_PATCHES"], vit_kwargs["NUM_Y_PATCHES"], vit_kwargs["NUM_Z_PATCHES"],
-            vit_kwargs["NUM_BINS_X_PATCH"], vit_kwargs["NUM_BINS_Y_PATCH"], vit_kwargs["NUM_BINS_Z_PATCH"]
-        )
-        .transpose(0, 3, 1, 4, 2, 5)   # undo the grouping
-        .reshape(
-            vit_kwargs["NUM_X_PATCHES"]*vit_kwargs["NUM_BINS_X_PATCH"],
-            vit_kwargs["NUM_Y_PATCHES"]*vit_kwargs["NUM_BINS_Y_PATCH"],
-            vit_kwargs["NUM_Z_PATCHES"]*vit_kwargs["NUM_BINS_Z_PATCH"]
-        )
-    )
+    r_all, phi_all, z_all, x_all, y_all = [], [], [], [], []
+    E_true_all, E_reco_all = [], []
 
-    
+    # ✅ NEW: store per-group resolution
+    resolution_per_group = {}  # NEW
 
-    fig, axarr = plt.subplots(1, 6, figsize=(7*6, 6))
+    for key in batch.keys():
+        local_ids = batch[key]["patch_positions"][0].detach().cpu().numpy()
+        flat_true = batch[key]["flat_tensor"][0].detach().cpu().numpy()
+        flat_reco = patches_chunked_reco[key][0].detach().cpu().numpy()
 
-    # -------------------------
-    # x-y data
-    # -------------------------
-    ax = axarr[0]
-    im = ax.imshow(
-        np.sum(x_particle_hist, axis=2),
-        origin="lower",
-        extent=(-vit_kwargs["X_MAX"], vit_kwargs["X_MAX"],
-                -vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"]),
-    )
-    ax.set_title("Event - x-y plane (summed over z)")
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    fig.colorbar(im, ax=ax, shrink=0.8)
+        E_true = np.nan_to_num(flat_true.sum(axis=1))
+        E_reco = np.nan_to_num(flat_reco.sum(axis=1))
 
-    # -------------------------
-    # x-y reco
-    # -------------------------
-    ax = axarr[1]
-    im = ax.imshow(
-        np.sum(x_particle_hist_reco, axis=2),
-        origin="lower",
-        extent=(-vit_kwargs["X_MAX"], vit_kwargs["X_MAX"],
-                -vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"]),
-    )
-    ax.set_title("Reco - x-y plane (summed over z)")
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    fig.colorbar(im, ax=ax, shrink=0.8)
+        # store for global scatter
+        x_all.append(local_ids[:, 0]*np.cos(local_ids[:, 1]))
+        y_all.append(local_ids[:, 0]*np.sin(local_ids[:, 1]))
+        z_all.append(local_ids[:, 2])
+        r_all.append(local_ids[:, 0])
+        phi_all.append(local_ids[:, 1])
+        E_true_all.append(E_true)
+        E_reco_all.append(E_reco)
 
-    # -------------------------
-    # x-z data
-    # -------------------------
-    ax = axarr[2]
-    im = ax.imshow(
-        np.sum(x_particle_hist, axis=0),
-        origin="lower",
-        extent=(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"],
-                -vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"]),
-    )
-    ax.set_title("Event - x-z plane (summed over y)")
-    ax.set_xlabel("y")
-    ax.set_ylabel("z")
-    fig.colorbar(im, ax=ax, shrink=0.8)
+        # ---------------------------------------
+        # NEW: per-group resolution (NOT aggregated)
+        # ---------------------------------------
+        
+        mask_nonzero = E_true > 0
+        res = (E_reco[mask_nonzero] - E_true[mask_nonzero]) / E_true[mask_nonzero]
+        resolution_per_group[str(key)] = res  # NEW
 
-    # -------------------------
-    # x-z reco
-    # -------------------------
-    ax = axarr[3]
-    im = ax.imshow(
-        np.sum(x_particle_hist_reco, axis=0),
-        origin="lower",
-        extent=(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"],
-                -vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"]),
-    )
-    ax.set_title("Reco - x-z plane (summed over y)")
-    ax.set_xlabel("y")
-    ax.set_ylabel("z")
-    fig.colorbar(im, ax=ax, shrink=0.8)
+    r = np.concatenate(r_all)
+    phi = np.concatenate(phi_all)
+    z = np.concatenate(z_all)
+    x = np.concatenate(x_all)
+    y = np.concatenate(y_all)
+    E_true = np.concatenate(E_true_all)
+    E_reco = np.concatenate(E_reco_all)
 
-    # -------------------------
-    # y-z data
-    # -------------------------
-    ax = axarr[4]
-    im = ax.imshow(
-        np.sum(x_particle_hist, axis=1),
-        origin="lower",
-        extent=(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"],
-                -vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"]),
-    )
-    ax.set_title("Event - y-z plane (summed over x)")
-    ax.set_xlabel("y")
-    ax.set_ylabel("z")
-    fig.colorbar(im, ax=ax, shrink=0.8)
+    # ✅ CHANGED: add extra panel for per-group histograms
+    fig, axarr = plt.subplots(1, 7, figsize=(7*7, 6))  # CHANGED
 
-    # -------------------------
-    # y-z reco
-    # -------------------------
-    ax = axarr[5]
-    im = ax.imshow(
-        np.sum(x_particle_hist_reco, axis=1),
-        origin="lower",
-        extent=(-vit_kwargs["Y_MAX"], vit_kwargs["Y_MAX"],
-                -vit_kwargs["Z_MAX"], vit_kwargs["Z_MAX"]),
-    )
-    ax.set_title("Reco - y-z plane (summed over x)")
-    ax.set_xlabel("y")
-    ax.set_ylabel("z")
-    fig.colorbar(im, ax=ax, shrink=0.8)
+    def scatter_plot(ax, x, y, c, title):
+        sc = ax.scatter(x, y, c=c, s=10)
+        ax.set_title(title)
+        plt.colorbar(sc, ax=ax, shrink=0.8)
+
+    scatter_plot(axarr[0], x, y, E_true, "True: r-phi")
+    scatter_plot(axarr[1], x, y, E_reco, "Reco: r-phi")
+
+    scatter_plot(axarr[2], z, phi, E_true, "True: z-phi")
+    scatter_plot(axarr[3], z, phi, E_reco, "Reco: z-phi")
+
+    scatter_plot(axarr[4], r, z, E_true, "True: r-z")
+    scatter_plot(axarr[5], r, z, E_reco, "Reco: r-z")
+
+    # ---------------------------------------
+    # NEW: per-group resolution histogram
+    # ---------------------------------------
+    ax = axarr[6]  # NEW
+    for key, res in resolution_per_group.items():
+        ax.hist(res, bins=50, histtype="step", linewidth=1.5, label=str(key))  # NEW
+
+    ax.set_xlabel(r"$(E_{reco} - E_{true}) / E_{true}$")
+    ax.set_ylabel("Counts")
+    ax.set_yscale("log")
+    ax.set_title("Resolution per patch group")
+    ax.legend(fontsize=6)  # NEW
+
+    for ax in axarr:
+        ax.set_xlabel("coord 1")
+        ax.set_ylabel("coord 2")
 
     fig.tight_layout()
     plt.show()
 
     if saveas is not None:
         fig.savefig(saveas + "_single_event_figures.png")
-
 
 
 def plot_loss(loss_history, lr_history, moving_average=100):

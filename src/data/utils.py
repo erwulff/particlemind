@@ -14,6 +14,7 @@ class Collater:
             "flat_tensor": [],
             "global_patch_ids": [],
             "local_patch_ids": [],
+            "patch_positions": [],
         })
 
         # ------------------------------------------------------------
@@ -31,6 +32,9 @@ class Collater:
                 grouped[key]["local_patch_ids"].append(
                     torch.as_tensor(obj["local_patch_ids"], dtype=torch.long)
                 )
+                grouped[key]["patch_positions"].append(
+                    torch.as_tensor(obj["patch_positions"], dtype=torch.long)
+                )
         
         # ------------------------------------------------------------
         # 2. concat within each key (ragged batch flattening)
@@ -43,6 +47,13 @@ class Collater:
                 "flat_tensor": torch.stack(obj["flat_tensor"], dim=0),  # (B, P, C)
                 "global_patch_ids": torch.stack(obj["global_patch_ids"], dim=0),      # (B, P)
                 "local_patch_ids": torch.stack(obj["local_patch_ids"], dim=0),      # (B, P, 3)
+                "patch_positions": torch.stack(obj["patch_positions"], dim=0),      # (B, P, 3)
             }
+            
+            axis_sum = torch.sum(torch.abs(out[key]["flat_tensor"]), dim=2)
+            out[key]["mask"] = torch.where(axis_sum > 0, 1.0, 0.0)
+
+    
+
 
         return out

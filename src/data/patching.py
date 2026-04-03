@@ -166,10 +166,10 @@ def build_patch_registry(
     tmp1 = registry["n_rings"]
     
 
-    print(f"[Registry] {patch_id} patches")
+    print(f"[Registry] {patch_id} total patches")
     print(f"{tmp1} rings ")
     print(f"{n_z_patches} z-bins")
-    print("phi patches/ring: ")
+    print("ring: total number of phi patches ")
     for r in sorted(registry["n_phi_per_ring"]):
         tmp2 = registry["n_phi_per_ring"][r]
         
@@ -414,7 +414,8 @@ def assign_hits_to_patches_barrel(
     grouped = defaultdict(lambda: {
         "flat_tensor": [],
         "global_patch_ids": [],
-        "local_patch_ids": []
+        "local_patch_ids": [],
+        "patch_positions": [],
     })
     
     for patch_id in result.keys():
@@ -424,12 +425,14 @@ def assign_hits_to_patches_barrel(
         grouped[shape]["flat_tensor"].append(tensor.reshape(-1))  # CHANGED: flatten here
         grouped[shape]["global_patch_ids"].append(patch_id)
         grouped[shape]["local_patch_ids"].append(result[patch_id]["index_coords"].reshape(-1))
+        grouped[shape]["patch_positions"].append(result[patch_id]["true_coords"].reshape(-1))
     
     # stack
     for shape in grouped:
         grouped[shape]["flat_tensor"] = np.stack(grouped[shape]["flat_tensor"]) # shape: n_patches, n_cells_in_patch
         grouped[shape]["global_patch_ids"] = np.array(grouped[shape]["global_patch_ids"])
         grouped[shape]["local_patch_ids"] = np.array(grouped[shape]["local_patch_ids"])
+        grouped[shape]["patch_positions"] = np.array(grouped[shape]["patch_positions"])
     
     return grouped
 
