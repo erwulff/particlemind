@@ -8,7 +8,7 @@ import logging
 
 
 
-class colliderMLHits(IterableDataset):
+class caloHitDataset(IterableDataset):
     def __init__(
         self,
         subset,
