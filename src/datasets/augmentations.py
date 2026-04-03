@@ -59,6 +59,8 @@ def augment_data(x):
     Apply stochastic augmentations.
     """
 
+    x = x.clone()  # 🔴 critical: global safety clone
+
     # 1. random noise
     x = add_random_noise(x, std=1e-2)
 
