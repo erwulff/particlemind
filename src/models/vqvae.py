@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 from src.models.optimizers import configure_optimizers_base
 from src.models.positional_encoding import DetectorPosEnc
+from src.datasets.augmentations import standardize_calo_hit_features_rphiz, augment_data
 
 
 
@@ -176,8 +177,8 @@ class VQVAENormFormer(torch.nn.Module):
         hidden_dim,
         num_heads=1,
         num_blocks=2,
-        vq_kwargs={},
-        vit_kwargs={},
+        vq_kwargs=None,
+        vit_kwargs=None,
         **kwargs,
     ):
         super().__init__()
@@ -200,7 +201,6 @@ class VQVAENormFormer(torch.nn.Module):
             num_blocks=self.num_blocks,
         )
         self.latent_projection_in = nn.Linear(self.hidden_dim, self.latent_dim)
-        self.vqlayer = VectorQuant(feature_size=self.latent_dim, **vq_kwargs)
         self.latent_projection_out = nn.Linear(self.latent_dim, self.hidden_dim)
         self.decoder_normformer = NormformerStack(
             hidden_dim=self.hidden_dim,
@@ -208,25 +208,30 @@ class VQVAENormFormer(torch.nn.Module):
             num_blocks=self.num_blocks,
         )
         self.output_projection = nn.Linear(hidden_dim, input_dim)
-
-        # ViT components
-
-        # each patch size needs its own linear encoder
-        self.linear_projection_encoders, self.linear_projection_decoders = torch.nn.ModuleDict(), torch.nn.ModuleDict()
-        for key in vit_kwargs["unique_patch_sizes_dict"].keys():
-            num_bins_in_patch = np.prod([k for k in key])
-            self.linear_projection_encoders[str(key)] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_EMBEDDING"])
-            self.linear_projection_decoders[str(key)] = torch.nn.Linear(vit_kwargs["D_EMBEDDING"], num_bins_in_patch)
         
-       
-        self.positional_encoding = DetectorPosEnc(
-            phi_max_per_r = vit_kwargs["n_phi_per_ring"],
-            n_z =  vit_kwargs["n_bins_z"],
-            d_latent = vit_kwargs["D_EMBEDDING"],
-        )        
+        if self.vq_kwargs is not None:
+          self.vqlayer = VectorQuant(feature_size=self.latent_dim, **vq_kwargs)
+          
+          
+        if self.vit_kwargs is not None:
+
+          # ViT components
+          # each patch size needs its own linear encoder
+          self.linear_projection_encoders, self.linear_projection_decoders = torch.nn.ModuleDict(), torch.nn.ModuleDict()
+          for key in vit_kwargs["unique_patch_sizes_dict"].keys():
+              num_bins_in_patch = np.prod([k for k in key])
+              self.linear_projection_encoders[str(key)] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_EMBEDDING"])
+              self.linear_projection_decoders[str(key)] = torch.nn.Linear(vit_kwargs["D_EMBEDDING"], num_bins_in_patch)
 
 
-    def forward(self, batch):
+          self.positional_encoding = DetectorPosEnc(
+              phi_max_per_r = vit_kwargs["n_phi_per_ring"],
+              n_z =  vit_kwargs["n_bins_z"],
+              d_latent = vit_kwargs["D_EMBEDDING"],
+          )        
+
+
+    def forward_vit(self, batch):
 
         embeddings = []
         global_patch_ids = []
@@ -299,6 +304,18 @@ class VQVAENormFormer(torch.nn.Module):
 
         return e, e_reco, {key:batch[key]["flat_tensor"] for key in batch.keys()}, x_reco_chunks, vq_out
 
+    def forward_hits(self, x, mask):
+        # encode
+        x = self.input_projection(x) # BS, num hits, hidden_dim
+        x = self.encoder_normformer(x, mask=mask) # BS, num hits, hidden_dim
+        z_embed = self.latent_projection_in(x) * mask.unsqueeze(-1)  # BS, num hits, latent_dim
+        # quantize
+        z, vq_out = self.vqlayer(z_embed) # BS, num hits, latent_dim
+        # decode
+        x_reco = self.latent_projection_out(z) * mask.unsqueeze(-1) # BS, num hits, hidden_dim
+        x_reco = self.decoder_normformer(x_reco, mask=mask) # BS, num hits, hidden_dim
+        x_reco = self.output_projection(x_reco) * mask.unsqueeze(-1) # BS, num hits, input_dim
+        return x_reco, vq_out
 
 
 class VQVAELightning(L.LightningModule):
@@ -367,7 +384,122 @@ class VQVAELightning(L.LightningModule):
 
         return embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out
 
-    def model_step(self, batch, return_x=False):
+
+
+    def contrastive_loss(self, z1, z2, temperature=0.1, alpha=1):
+
+        def pool(z):
+            # z: (B, N, 1, D)
+            z = z.squeeze(2)  # (B, N, D)
+            return z.mean(dim=1)  # or sum / attention pooling
+
+        z1 = pool(z1)
+        z2 = pool(z2)
+        # inputs have shape (B, latent_dim)
+
+        # SimCLR loss
+
+        batch_size = z1.shape[0]
+        z1 = F.normalize( z1, dim=1 )
+        z2 = F.normalize( z2, dim=1 )
+        z   = torch.cat( [z1, z2], dim=0 )
+        similarity_matrix = F.cosine_similarity( z.unsqueeze(1), z.unsqueeze(0), dim=2 )
+        sim_ij = torch.diag( similarity_matrix,  batch_size ) # batch_size above the main diagonal -- x_i x_i'
+        sim_ji = torch.diag( similarity_matrix, -batch_size ) # below the main diagonal -- x_i' x_i
+        positives = torch.cat( [sim_ij, sim_ji], dim=0 )
+        nominator = torch.exp( positives / temperature )
+        negatives_mask = ( ~torch.eye( 2*batch_size, 2*batch_size, dtype=bool ) ).float().to(z1.device)
+        denominator = negatives_mask * torch.exp( similarity_matrix / temperature )
+        loss_partial = -torch.log( nominator / (torch.sum( denominator, dim=1 )).pow(exponent=alpha) )
+        loss = torch.sum( loss_partial )/( 2*batch_size )
+
+        return loss
+
+   
+  
+  def model_step_vqvae(self, batch, return_x=False):
+        """Perform a single model step on a batch of data."""
+
+        alpha = self.hparams["model_kwargs"]["alpha"]
+        beta = self.hparams["model_kwargs"]["beta"]
+
+        # x_particle, mask_particle, labels = batch
+        x_particle = batch["calo_hit_features"]
+        mask_particle = batch["mask"]
+        labels = batch["hit_labels"]   
+        
+        if beta != 0:
+            # augment data
+            x_particle_augmented = self.augment_data(x_particle)
+            x_particle_augmented = standardize_calo_hit_features_rphiz(x_particle_augmented)
+            x_particle_augmented_reco, vq_out_augmented = self.forward(x_particle_augmented, mask_particle)
+            ssl_loss = self.contrastive_loss(vq_out["z"], vq_out_augmented["z"])
+        else:
+            ssl_loss = 0
+
+        x_particle = standardize_calo_hit_features_rphiz(x_particle)
+
+        print(x_particle)
+        print(x_particle_augmented)
+        exit()
+        x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
+
+        reco_loss = ((x_particle_reco - x_particle) ** 2).mean()
+        
+        cmt_loss = vq_out["loss"]
+        code_idx = vq_out["q"]
+        
+        loss = reco_loss + alpha * cmt_loss + beta * ssl_loss
+
+        if return_x:
+            return loss, reco_loss, cmt_loss, ssl_loss, x_particle, x_particle_reco, mask_particle, labels, code_idx
+
+        return loss, reco_loss, cmt_loss, ssl_loss
+  
+  
+  
+  def training_step_vqvae(self, batch, batch_idx: int) -> torch.Tensor:
+        """Perform a single training step on a batch of data from the training set."""
+        loss, reco_loss, cmt_loss, ssl_loss = self.model_step(batch)
+
+        self.train_loss_history.append(loss.detach().cpu().numpy())
+        self.log(
+                "train/total_loss",
+                loss,                # <-- pass the tensor, not loss.item()
+                on_step=True,
+                on_epoch=True,       # optional if you also want epoch avg
+                prog_bar=True,
+                sync_dist=True       # sync across GPUs
+            )
+        self.log(
+                "train/reco_loss",
+                reco_loss,                # <-- pass the tensor, not loss.item()
+                on_step=True,
+                on_epoch=True,       # optional if you also want epoch avg
+                prog_bar=True,
+                sync_dist=True       # sync across GPUs
+            )
+        self.log(
+                "train/cmt_loss",
+                cmt_loss,                # <-- pass the tensor, not loss.item()
+                on_step=True,
+                on_epoch=True,       # optional if you also want epoch avg
+                prog_bar=True,
+                sync_dist=True       # sync across GPUs
+            )
+        self.log(
+                "train/ssl_loss",
+                loss,                # <-- pass the tensor, not loss.item()
+                on_step=True,
+                on_epoch=True,       # optional if you also want epoch avg
+                prog_bar=True,
+                sync_dist=True       # sync across GPUs
+            )
+
+        return loss
+      
+      
+     def model_step_vit(self, batch, return_x=False):
         """Perform a single model step on a batch of data."""
 
 
@@ -390,7 +522,7 @@ class VQVAELightning(L.LightningModule):
 
         return loss, reco_loss, cmt_loss
 
-    def training_step(self, batch, batch_idx: int) -> torch.Tensor:
+    def training_step_vit(self, batch, batch_idx: int) -> torch.Tensor:
         """Perform a single training step on a batch of data from the training set."""
         loss, reco_loss, cmt_loss = self.model_step(batch)
 
@@ -421,7 +553,6 @@ class VQVAELightning(L.LightningModule):
             )
 
         return loss
-
 
     def on_train_epoch_start(self):
         logger.info(f"Epoch {self.trainer.current_epoch} starting.")
@@ -454,6 +585,7 @@ class VQVAELightning(L.LightningModule):
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         loss, reco_loss, cmt_loss, embedding_hit, embedding_hit_reco, batch, patches_chunked_reco, vq_out = self.model_step(batch, return_x=True)
+        loss, reco_loss, cmt_loss, ssl_loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
 
  
         # save the original and reconstructed data
@@ -462,10 +594,13 @@ class VQVAELightning(L.LightningModule):
         # self.val_mask.append(mask.detach().cpu().numpy())
         # self.val_labels.append(labels.detach().cpu().numpy())
         # self.val_code_idx.append(vq_out["q"].detach().cpu().numpy())
+        
+        
 
         self.log("val/total_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
         self.log("val/reco_loss", reco_loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
         self.log("val/cmt_loss", cmt_loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
+        self.log("val/ssl_loss", ssl_loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
         # for the first validation step, plot the model
         if batch_idx == 0:
@@ -642,4 +777,5 @@ class VQVAELightning(L.LightningModule):
 
     
         return x_reco
+
 
