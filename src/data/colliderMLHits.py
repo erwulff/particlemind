@@ -107,6 +107,8 @@ class colliderMLHits(IterableDataset):
             z = np.asarray(event["z"], dtype=np.float32)
             energy = np.asarray(event["total_energy"], dtype=np.float32)
 
+            
+
         
 
             hit_labels = np.array(event["detector"])
