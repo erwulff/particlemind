@@ -23,9 +23,8 @@ from tqdm import tqdm
 
 from src.models.optimizers import configure_optimizers_base
 from src.models.positional_encoding import DetectorPosEnc
-from src.datasets.augmentations import standardize_calo_hit_features_rphiz, augment_data
-
-
+from src.data.augmentations import standardize_calo_hit_features_rphiz, augment_data
+from src.models.plotting import plot_model_hit, plot_model_patch
 
 # vqtorch can be installed from https://github.com/minyoungg/vqtorch
 try:
@@ -175,6 +174,7 @@ class VQVAENormFormer(torch.nn.Module):
         input_dim,
         latent_dim,
         hidden_dim,
+        data_type="",
         num_heads=1,
         num_blocks=2,
         vq_kwargs=None,
@@ -187,9 +187,11 @@ class VQVAENormFormer(torch.nn.Module):
         self.lr_history = []
 
         self.vq_kwargs = vq_kwargs
+        self.vit_kwargs = vit_kwargs
         self.input_dim = input_dim
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
+        self.data_type = data_type
         self.num_heads = num_heads
         self.num_blocks = num_blocks
 
@@ -208,7 +210,7 @@ class VQVAENormFormer(torch.nn.Module):
             num_blocks=self.num_blocks,
         )
         self.output_projection = nn.Linear(hidden_dim, input_dim)
-        
+    
         if self.vq_kwargs is not None:
           self.vqlayer = VectorQuant(feature_size=self.latent_dim, **vq_kwargs)
           
@@ -223,99 +225,126 @@ class VQVAENormFormer(torch.nn.Module):
               self.linear_projection_encoders[str(key)] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_EMBEDDING"])
               self.linear_projection_decoders[str(key)] = torch.nn.Linear(vit_kwargs["D_EMBEDDING"], num_bins_in_patch)
 
-
           self.positional_encoding = DetectorPosEnc(
               phi_max_per_r = vit_kwargs["n_phi_per_ring"],
               n_z =  vit_kwargs["n_bins_z"],
               d_latent = vit_kwargs["D_EMBEDDING"],
           )        
 
-
-    def forward_vit(self, batch):
-
-        embeddings = []
-        global_patch_ids = []
-        local_patch_ids = []
-        mask = []
-        patch_group_sizes = []  # track how many patches per group, for splitting later
     
-        # 1. encode each patch group
-        for key in sorted(batch.keys()):
-            key_str = str(key)
+    def forward(self, batch, x, mask):
+        
+        if self.data_type == "patch":
 
-         
-
-            emb = self.linear_projection_encoders[key_str](batch[key]["flat_tensor"])  # (B, P_k, D) P_k = num. patches per key. should have sum P_k = P
-            P_k = emb.shape[1]
-            embeddings.append(emb)
-            global_patch_ids.append(batch[key]["global_patch_ids"])
-            local_patch_ids.append(batch[key]["local_patch_ids"])
-            mask.append(batch[key]["mask"])
-            patch_group_sizes.append(P_k)
-
-        # 2. concatenate all patches
-        embeddings       = torch.cat(embeddings,       dim=1)  # (B, P_total, D)
-        global_patch_ids = torch.cat(global_patch_ids, dim=1)  # (B, P_total)
-        local_patch_ids  = torch.cat(local_patch_ids,  dim=1)  # (B, P_total, 3)
-        mask             = torch.cat(mask,             dim=1)  # (B, P_total)
+            """
+            Inputs:
+                batch: dict with keys = tuples associated with the unique patch index (# r cells, # phi cells, # z cells)
+                batch[key]: dict with keys:
+                    flat_tensor
+                    global_patch_ids
+                    mask
     
-        # 3. reorder all tensors by global patch id
-        order   = torch.argsort(global_patch_ids, dim=1)
-        order_D = order.unsqueeze(-1).expand_as(embeddings)
-        order_3 = order.unsqueeze(-1).expand_as(local_patch_ids)
+            Returns:
+                e
+                e_reco
+                {key:batch[key]["flat_tensor"] for key in batch.keys()}, 
+                x_reco_chunks
+                vq_out
+            """
     
-        embeddings      = torch.gather(embeddings,      dim=1, index=order_D)
-        local_patch_ids = torch.gather(local_patch_ids, dim=1, index=order_3)
-        mask            = torch.gather(mask,            dim=1, index=order)
+            embeddings = []
+            global_patch_ids = []
+            local_patch_ids = []
+            mask = []
+            patch_group_sizes = []  # track how many patches per group, for splitting later
+        
+            # 1. encode each patch group
+            for key in sorted(batch.keys()):
+                key_str = str(key)
     
-        # 4. add positional encoding
-        r_idx, phi_idx, z_idx = local_patch_ids[..., 0], local_patch_ids[..., 1], local_patch_ids[..., 2]
-
-        e = embeddings + self.positional_encoding(r_idx, phi_idx, z_idx)  # (B, P_total, D)
-
+                emb = self.linear_projection_encoders[key_str](batch[key]["flat_tensor"])  # (B, P_k, D) P_k = num. patches per key. should have sum P_k = P
+                P_k = emb.shape[1]
+                embeddings.append(emb)
+                global_patch_ids.append(batch[key]["global_patch_ids"])
+                local_patch_ids.append(batch[key]["local_patch_ids"])
+                mask.append(batch[key]["mask"])
+                patch_group_sizes.append(P_k)
     
-        # 5. encode → quantize → decode
-        e       = self.input_projection(e)
-        e       = self.encoder_normformer(e, mask=mask)
-        z_embed = self.latent_projection_in(e) * mask.unsqueeze(-1)
+            # 2. concatenate all patches
+            embeddings       = torch.cat(embeddings,       dim=1)  # (B, P_total, D)
+            global_patch_ids = torch.cat(global_patch_ids, dim=1)  # (B, P_total)
+            local_patch_ids  = torch.cat(local_patch_ids,  dim=1)  # (B, P_total, 3)
+            mask             = torch.cat(mask,             dim=1)  # (B, P_total)
+        
+            # 3. reorder all tensors by global patch id
+            order   = torch.argsort(global_patch_ids, dim=1)
+            order_D = order.unsqueeze(-1).expand_as(embeddings)
+            order_3 = order.unsqueeze(-1).expand_as(local_patch_ids)
+        
+            embeddings      = torch.gather(embeddings,      dim=1, index=order_D)
+            local_patch_ids = torch.gather(local_patch_ids, dim=1, index=order_3)
+            mask            = torch.gather(mask,            dim=1, index=order)
+        
+            # 4. add positional encoding
+            r_idx, phi_idx, z_idx = local_patch_ids[..., 0], local_patch_ids[..., 1], local_patch_ids[..., 2]
+    
+            e = embeddings + self.positional_encoding(r_idx, phi_idx, z_idx)  # (B, P_total, D)
+    
+        
+            # 5. encode → quantize → decode
+            e       = self.input_projection(e)
+            e       = self.encoder_normformer(e, mask=mask)
+            z_embed = self.latent_projection_in(e) * mask.unsqueeze(-1)
+    
+            if self.vq_kwargs is not None:
+                z, vq_out = self.vqlayer(z_embed)
+            else:
+                z, vq_out = z_embed, None
+    
+            e_reco  = self.latent_projection_out(z) * mask.unsqueeze(-1)
+            e_reco  = self.decoder_normformer(e_reco, mask=mask)
+            e_reco  = self.output_projection(e_reco) * mask.unsqueeze(-1)
+        
+            # 6. undo the sort so patches line up with their original key groupings
+            # argsort of argsort gives the inverse permutation
+            inv_order = torch.argsort(order, dim=1)
+            e_reco_unordered = torch.gather(e_reco, dim=1, index=inv_order.unsqueeze(-1).expand_as(e_reco))
+        
+            # 7. split back by patch group and decode each with its own linear decoder
+            x_reco_chunks = {}
+            start = 0
+            for key, P_k in zip(sorted(batch.keys()), patch_group_sizes):
+                chunk = e_reco_unordered[:, start:start + P_k, :]      # (B, P_k, D)
+                x_reco_chunks[key] = self.linear_projection_decoders[str(key)](chunk)  # (B, P_k, bins_k)
+                start += P_k
+    
+            return e, e_reco, {key:batch[key]["flat_tensor"] for key in batch.keys()}, x_reco_chunks, vq_out
+
+        elif self.data_type == "hit":
 
 
 
-
+            """
+            Inputs:
+                batch: TENSOR
+            """
+            # encode
+            x = self.input_projection(x) # BS, num hits, hidden_dim
+            x = self.encoder_normformer(x, mask=mask) # BS, num hits, hidden_dim
+            z_embed = self.latent_projection_in(x) * mask.unsqueeze(-1)  # BS, num hits, latent_dim
             
-        z, vq_out = self.vqlayer(z_embed)
-
-        e_reco  = self.latent_projection_out(z) * mask.unsqueeze(-1)
-        e_reco  = self.decoder_normformer(e_reco, mask=mask)
-        e_reco  = self.output_projection(e_reco) * mask.unsqueeze(-1)
-    
-        # 6. undo the sort so patches line up with their original key groupings
-        # argsort of argsort gives the inverse permutation
-        inv_order = torch.argsort(order, dim=1)
-        e_reco_unordered = torch.gather(e_reco, dim=1, index=inv_order.unsqueeze(-1).expand_as(e_reco))
-    
-        # 7. split back by patch group and decode each with its own linear decoder
-        x_reco_chunks = {}
-        start = 0
-        for key, P_k in zip(sorted(batch.keys()), patch_group_sizes):
-            chunk = e_reco_unordered[:, start:start + P_k, :]      # (B, P_k, D)
-            x_reco_chunks[key] = self.linear_projection_decoders[str(key)](chunk)  # (B, P_k, bins_k)
-            start += P_k
-
-        return e, e_reco, {key:batch[key]["flat_tensor"] for key in batch.keys()}, x_reco_chunks, vq_out
-
-    def forward_hits(self, x, mask):
-        # encode
-        x = self.input_projection(x) # BS, num hits, hidden_dim
-        x = self.encoder_normformer(x, mask=mask) # BS, num hits, hidden_dim
-        z_embed = self.latent_projection_in(x) * mask.unsqueeze(-1)  # BS, num hits, latent_dim
-        # quantize
-        z, vq_out = self.vqlayer(z_embed) # BS, num hits, latent_dim
-        # decode
-        x_reco = self.latent_projection_out(z) * mask.unsqueeze(-1) # BS, num hits, hidden_dim
-        x_reco = self.decoder_normformer(x_reco, mask=mask) # BS, num hits, hidden_dim
-        x_reco = self.output_projection(x_reco) * mask.unsqueeze(-1) # BS, num hits, input_dim
-        return x_reco, vq_out
+            # quantize
+            if self.vq_kwargs is not None:
+                z, vq_out = self.vqlayer(z_embed) # BS, num hits, latent_dim
+            else:
+                z, vq_out = z_embed, None
+            
+            # decode
+            x_reco = self.latent_projection_out(z) * mask.unsqueeze(-1) # BS, num hits, hidden_dim
+            x_reco = self.decoder_normformer(x_reco, mask=mask) # BS, num hits, hidden_dim
+            x_reco = self.output_projection(x_reco) * mask.unsqueeze(-1) # BS, num hits, input_dim
+            
+            return x_reco, vq_out, z_embed # CHANGED
 
 
 class VQVAELightning(L.LightningModule):
@@ -323,10 +352,11 @@ class VQVAELightning(L.LightningModule):
 
     def __init__(
         self,
+        data_type, # patch or hits
         optimizer_kwargs={},
         lr_scheduler_kwargs = {"use_scheduler":False},
         model_kwargs={},
-        vit_kwargs={},
+        vit_kwargs=None,
         model_type="Transformer",
         num_train_events=0,
         batch_size_per_gpu=0,
@@ -336,12 +366,15 @@ class VQVAELightning(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(logger=False)
 
+        
+
+
         if model_type == "MLP":
             self.model = VQVAEMLP(**model_kwargs)
         elif model_type == "Transformer":
             self.model = VQVAETransformer(**model_kwargs)
         elif model_type == "VQVAENormFormer":
-            self.model = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs)
+            self.model = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
         else:
             raise ValueError(f"Unknown model type: {model_type}")
 
@@ -366,10 +399,11 @@ class VQVAELightning(L.LightningModule):
         self.batch_size_per_gpu = batch_size_per_gpu
 
         self.plot_dir_name = plot_dir_name
+        self.data_type = data_type
 
-        self.vit_kwargs = vit_kwargs
+        self.use_vq = model_kwargs["vq_kwargs"]
 
-        
+  
         
 
     def configure_optimizers(self):
@@ -377,12 +411,16 @@ class VQVAELightning(L.LightningModule):
 
 
 
-    def forward(self, batch):
+    def forward(self, batch, x, mask):
 
-        
-        embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.model(batch)
+        if self.data_type == "patch":
 
-        return embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out
+            embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.model(batch, None, None)
+            return embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out
+
+        elif self.data_type == "hit":
+            x_reco, vq_out, z_embed = self.model(None, x, mask)
+            return x_reco, vq_out, z_embed 
 
 
 
@@ -417,142 +455,107 @@ class VQVAELightning(L.LightningModule):
 
    
   
-  def model_step_vqvae(self, batch, return_x=False):
+    def model_step(self, batch, return_x=False):
         """Perform a single model step on a batch of data."""
-
+    
         alpha = self.hparams["model_kwargs"]["alpha"]
-        beta = self.hparams["model_kwargs"]["beta"]
+        beta = self.hparams["model_kwargs"]["beta"] # associated with SSL
+    
+        if self.data_type == "hit":
+    
+            x_particle = batch["calo_hit_features"]
+            mask_particle = batch["mask"]
+            labels = batch["hit_labels"]   
+            
+            if beta != 0:
+                # augment data
+                x_particle_augmented = augment_data(x_particle) # augmentation needs to be done before standardization
+                x_particle_augmented = standardize_calo_hit_features_rphiz(x_particle_augmented)
+                x_particle_augmented, vq_out_augmented, z_embed_augmented = self.forward(None, x_particle_augmented, mask_particle)
+              
+            else:
+                ssl_loss = 0
+    
+            x_particle = standardize_calo_hit_features_rphiz(x_particle)
+    
 
-        # x_particle, mask_particle, labels = batch
-        x_particle = batch["calo_hit_features"]
-        mask_particle = batch["mask"]
-        labels = batch["hit_labels"]   
-        
-        if beta != 0:
-            # augment data
-            x_particle_augmented = self.augment_data(x_particle)
-            x_particle_augmented = standardize_calo_hit_features_rphiz(x_particle_augmented)
-            x_particle_augmented_reco, vq_out_augmented = self.forward(x_particle_augmented, mask_particle)
-            ssl_loss = self.contrastive_loss(vq_out["z"], vq_out_augmented["z"])
-        else:
-            ssl_loss = 0
-
-        x_particle = standardize_calo_hit_features_rphiz(x_particle)
-
-        print(x_particle)
-        print(x_particle_augmented)
-        exit()
-        x_particle_reco, vq_out = self.forward(x_particle, mask_particle)
-
-        reco_loss = ((x_particle_reco - x_particle) ** 2).mean()
-        
-        cmt_loss = vq_out["loss"]
-        code_idx = vq_out["q"]
-        
-        loss = reco_loss + alpha * cmt_loss + beta * ssl_loss
-
-        if return_x:
-            return loss, reco_loss, cmt_loss, ssl_loss, x_particle, x_particle_reco, mask_particle, labels, code_idx
-
-        return loss, reco_loss, cmt_loss, ssl_loss
-  
-  
-  
-  def training_step_vqvae(self, batch, batch_idx: int) -> torch.Tensor:
-        """Perform a single training step on a batch of data from the training set."""
-        loss, reco_loss, cmt_loss, ssl_loss = self.model_step(batch)
-
-        self.train_loss_history.append(loss.detach().cpu().numpy())
-        self.log(
-                "train/total_loss",
-                loss,                # <-- pass the tensor, not loss.item()
-                on_step=True,
-                on_epoch=True,       # optional if you also want epoch avg
-                prog_bar=True,
-                sync_dist=True       # sync across GPUs
-            )
-        self.log(
-                "train/reco_loss",
-                reco_loss,                # <-- pass the tensor, not loss.item()
-                on_step=True,
-                on_epoch=True,       # optional if you also want epoch avg
-                prog_bar=True,
-                sync_dist=True       # sync across GPUs
-            )
-        self.log(
-                "train/cmt_loss",
-                cmt_loss,                # <-- pass the tensor, not loss.item()
-                on_step=True,
-                on_epoch=True,       # optional if you also want epoch avg
-                prog_bar=True,
-                sync_dist=True       # sync across GPUs
-            )
-        self.log(
-                "train/ssl_loss",
-                loss,                # <-- pass the tensor, not loss.item()
-                on_step=True,
-                on_epoch=True,       # optional if you also want epoch avg
-                prog_bar=True,
-                sync_dist=True       # sync across GPUs
-            )
-
-        return loss
-      
-      
-     def model_step_vit(self, batch, return_x=False):
-        """Perform a single model step on a batch of data."""
-
-
-        embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.forward(batch)
+            x_particle_reco, vq_out, z_embed = self.forward(None, x_particle, mask_particle) # batch not used
 
             
+            reco_loss = ((x_particle_reco - x_particle) ** 2).mean()
+            loss = reco_loss
+            loss_dict = {"reco_loss": reco_loss}
 
-        reco_loss = torch.stack([
-            ((patches_chunked[key] - patches_chunked_reco[key]) ** 2).mean()
-            for key in patches_chunked.keys()
-        ]).mean()
 
+            if beta != 0:
+                ssl_loss = self.contrastive_loss(z_embed, z_embed_augmented)
+                loss += beta * ssl_loss
+                loss_dict["ssl_loss"] = ssl_loss
+                
+
+
+            if self.use_vq:
+                cmt_loss = vq_out["loss"]
+                code_idx = vq_out["q"]
+                loss +=  alpha * cmt_loss
+                loss_dict["cmt_loss"] = cmt_loss
+            else:
+                code_idx = None
+                
+            
+
+
+            loss_dict["total_loss"] = loss
+    
+            if return_x:
+                return loss_dict, x_particle, x_particle_reco, mask_particle, labels, code_idx
+    
+            return loss_dict
+    
+        elif self.data_type == "patch":
+    
+            embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.forward(batch, None, None) # x, mask not used
+            reco_loss = torch.stack([
+                ((patches_chunked[key] - patches_chunked_reco[key]) ** 2).mean()
+                for key in patches_chunked.keys()
+            ]).mean()
+
+            loss = reco_loss
+
+            loss_dict = {"reco_loss": reco_loss}
+
+            if self.use_vq:
+                cmt_loss = vq_out["loss"]
+                loss += alpha * cmt_loss
+                loss_dict["cmt_loss"] = cmt_loss
+
+            loss_dict["total_loss"] = loss
         
-        alpha = self.hparams["model_kwargs"]["alpha"]
-        cmt_loss = vq_out["loss"]
-        loss = reco_loss + alpha * cmt_loss
+                
+    
+            if return_x:
+                return loss_dict, embedding_hit, embedding_hit_reco, batch, patches_chunked_reco, vq_out
+    
+            return loss_dict
 
-        if return_x:
-            return loss, reco_loss, cmt_loss, embedding_hit, embedding_hit_reco, batch, patches_chunked_reco, vq_out
+  
 
-        return loss, reco_loss, cmt_loss
-
-    def training_step_vit(self, batch, batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch, batch_idx: int) -> torch.Tensor:
         """Perform a single training step on a batch of data from the training set."""
-        loss, reco_loss, cmt_loss = self.model_step(batch)
+        loss_dict = self.model_step(batch)
 
-        self.train_loss_history.append(loss.detach().cpu().numpy())
-        self.log(
-                "train/total_loss",
-                loss,                # <-- pass the tensor, not loss.item()
-                on_step=True,
-                on_epoch=True,       # optional if you also want epoch avg
-                prog_bar=True,
-                sync_dist=True       # sync across GPUs
-            )
-        self.log(
-                "train/reco_loss",
-                reco_loss,                # <-- pass the tensor, not loss.item()
-                on_step=True,
-                on_epoch=True,       # optional if you also want epoch avg
-                prog_bar=True,
-                sync_dist=True       # sync across GPUs
-            )
-        self.log(
-                "train/cmt_loss",
-                cmt_loss,                # <-- pass the tensor, not loss.item()
-                on_step=True,
-                on_epoch=True,       # optional if you also want epoch avg
-                prog_bar=True,
-                sync_dist=True       # sync across GPUs
-            )
+        self.train_loss_history.append(loss_dict["total_loss"].detach().cpu().numpy())
+        for loss_type in loss_dict.keys():
+            self.log(
+                    f"train/{loss_type}",
+                    loss_dict[loss_type],                # <-- pass the tensor, not loss.item()
+                    on_step=True,
+                    on_epoch=True,       # optional if you also want epoch avg
+                    prog_bar=True,
+                    sync_dist=True       # sync across GPUs
+                )
 
-        return loss
+        return loss_dict["total_loss"]
 
     def on_train_epoch_start(self):
         logger.info(f"Epoch {self.trainer.current_epoch} starting.")
@@ -584,8 +587,12 @@ class VQVAELightning(L.LightningModule):
         self.val_code_idx = []
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
-        loss, reco_loss, cmt_loss, embedding_hit, embedding_hit_reco, batch, patches_chunked_reco, vq_out = self.model_step(batch, return_x=True)
-        loss, reco_loss, cmt_loss, ssl_loss, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
+
+        if self.data_type == "patch":
+            loss_dict, embedding_hit, embedding_hit_reco, batch, patches_chunked_reco, vq_out = self.model_step(batch, return_x=True)
+
+        elif self.data_type == "hit":
+            loss_dict, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
 
  
         # save the original and reconstructed data
@@ -596,11 +603,9 @@ class VQVAELightning(L.LightningModule):
         # self.val_code_idx.append(vq_out["q"].detach().cpu().numpy())
         
         
+        for loss_type in loss_dict.keys():
+            self.log(f"val/total_loss", loss_dict[loss_type].item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
-        self.log("val/total_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
-        self.log("val/reco_loss", reco_loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
-        self.log("val/cmt_loss", cmt_loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
-        self.log("val/ssl_loss", ssl_loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
         # for the first validation step, plot the model
         if batch_idx == 0:
@@ -615,20 +620,32 @@ class VQVAELightning(L.LightningModule):
             plot_dir = Path(self.trainer.default_root_dir + f"/plots/{self.plot_dir_name}/")
             plot_dir.mkdir(exist_ok=True)
             plot_filename = f"{plot_dir}/epoch{curr_epoch}_gstep{curr_step}"
-            # log the plot
-            plot_model(
-                batch=batch,
-                patches_chunked_reco=patches_chunked_reco,
-                vq_out=vq_out,
-                num_codes=self.model.vq_kwargs["num_codes"],
-                device=self.device,
-                vit_kwargs=self.vit_kwargs,
-                saveas=plot_filename,
-            )
+
+            if self.data_type == "patch":
+                # log the plot
+                plot_model_patch(
+                    batch=batch,
+                    patches_chunked_reco=patches_chunked_reco,
+                    vq_out=vq_out,
+                    num_codes=self.model.vq_kwargs["num_codes"] if vq_out is not None else None,
+                    device=self.device,
+                    saveas=plot_filename,
+                )
+            elif self.data_type == "hit":
+                 plot_model_hit(
+                     model=self.model, 
+                     input_data=batch["calo_hit_features"], 
+                     labels=batch["hit_labels"], 
+                     masks=batch["mask"],
+                     device=self.device,
+                     saveas=plot_filename
+                 )
+
+            
             if comet_logger is not None:
                 comet_logger.log_image(plot_filename, name=plot_filename.split("/")[-1], step=curr_step)
 
-        return loss
+        return loss_dict["total_loss"]
 
     def on_test_epoch_start(self) -> None:
         self.test_x_original = []

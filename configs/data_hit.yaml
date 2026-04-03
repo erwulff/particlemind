@@ -4,10 +4,9 @@ subset: "ttbar_pu0_calo_hits"
 train_fraction: 0.8
 batch_size_per_gpu: 4
 pad: 2000
-n_samples_total: 50
+n_samples_total: 50000
 num_workers: 2
 
-system: "HCAL"
 data_type: "hit"
 
 

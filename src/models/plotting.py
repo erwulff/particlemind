@@ -1,5 +1,11 @@
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
 
-def plot_model_hits(model, input_data, labels, device="cuda", n_events_to_plot=2, n_scatterpoints_to_plot=200, masks=None, saveas=None):
+from src.data.augmentations import inverse_standardize_calo_hit_features_rphiz
+
+
+def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2, n_scatterpoints_to_plot=200, masks=None, saveas=None):
     """Visualize the model.
 
     Parameters
@@ -27,25 +33,29 @@ def plot_model_hits(model, input_data, labels, device="cuda", n_events_to_plot=2
     with torch.no_grad():
         # print(f"Model device: {next(model.parameters()).device}")
         # print(f"Samples device: {samples.device}")
-        reco, vq_out = model(input_data, masks)
+        reco, vq_out, _ = model(None, input_data, masks)
+
         
-        master_z_q = vq_out["z_q"]
-        master_z_e = vq_out["z"]
-        master_idx = vq_out["q"]
 
-        # move r, z_e, z_q, idx to cpu for plotting
-        reco = reco.detach().cpu().numpy()
-        master_z_e = master_z_e.detach().cpu().numpy()
-        master_z_q = master_z_q.detach().cpu().numpy()
-        master_idx = master_idx.detach().cpu().numpy()
+        if vq_out is not None:
+        
+            master_z_q = vq_out["z_q"]
+            master_z_e = vq_out["z"]
+            master_idx = vq_out["q"]
+       
+            master_z_e = master_z_e.detach().cpu().numpy()
+            master_z_q = master_z_q.detach().cpu().numpy()
+            master_idx = master_idx.detach().cpu().numpy()
 
-    input_data = input_data.detach().cpu().numpy()
+    input_data = inverse_standardize_calo_hit_features_rphiz(input_data).detach().cpu().numpy()
+    reco = inverse_standardize_calo_hit_features_rphiz(reco).detach().cpu().numpy()
+
     labels = labels.detach().cpu().numpy()
     if masks is not None:
         masks = masks.detach().cpu().numpy()
 
-    event_samples_E, event_samples_x, event_samples_y,event_samples_z = [], [], [], []
-    reco_samples_E, reco_samples_x, reco_samples_y, reco_samples_z = [], [], [], []
+    event_samples_E, event_samples_r, event_samples_phi, event_samples_z = [], [], [], []
+    reco_samples_E, reco_samples_r, reco_samples_phi, reco_samples_z = [], [], [], []
     labels_event = []
     z_e, z_q, idx = [], [], []
 
@@ -54,31 +64,33 @@ def plot_model_hits(model, input_data, labels, device="cuda", n_events_to_plot=2
         if masks is not None:
             mask = masks[event]
             event_samples_E.append(input_data[event, :, 3][mask == 1])
-            event_samples_x.append(input_data[event, :, 0][mask == 1])
-            event_samples_y.append(input_data[event, :, 1][mask == 1])
+            event_samples_r.append(input_data[event, :, 0][mask == 1])
+            event_samples_phi.append(input_data[event, :, 1][mask == 1])
             event_samples_z.append(input_data[event, :, 2][mask == 1])
             reco_samples_E.append(reco[event, :, 3][mask == 1])
-            reco_samples_x.append(reco[event, :, 0][mask == 1])
-            reco_samples_y.append(reco[event, :, 1][mask == 1])
+            reco_samples_r.append(reco[event, :, 0][mask == 1])
+            reco_samples_phi.append(reco[event, :, 1][mask == 1])
             reco_samples_z.append(reco[event, :, 2][mask == 1])
             labels_event.append(labels[event][mask == 1])
-            z_e.append(master_z_e[event].squeeze(1)[mask == 1])
-            z_q.append(master_z_q[event].squeeze(1)[mask == 1])
-            idx.append(master_idx[event].squeeze(1)[mask == 1])
+            if vq_out is not None:
+                z_e.append(master_z_e[event].squeeze(1)[mask == 1])
+                z_q.append(master_z_q[event].squeeze(1)[mask == 1])
+                idx.append(master_idx[event].squeeze(1)[mask == 1])
 
         else:
             event_samples_E.append(input_data[event, :, 3])
-            event_samples_x.append(input_data[event, :, 0])
-            event_samples_y.append(input_data[event, :, 1])
+            event_samples_r.append(input_data[event, :, 0])
+            event_samples_phi.append(input_data[event, :, 1])
             event_samples_z.append(input_data[event, :, 2])
             reco_samples_E.append(reco[event, :, 3])
-            reco_samples_x.append(reco[event, :, 0])
-            reco_samples_y.append(reco[event, :, 1])
+            reco_samples_r.append(reco[event, :, 0])
+            reco_samples_phi.append(reco[event, :, 1])
             reco_samples_z.append(reco[event, :, 2])
             labels_event.append(labels[event])
-            z_e.append(master_z_e[event].squeeze(1))
-            z_q.append(master_z_q[event].squeeze(1))
-            idx.append(master_idx[event].squeeze(1))
+            if vq_out is not None:
+                z_e.append(master_z_e[event].squeeze(1))
+                z_q.append(master_z_q[event].squeeze(1))
+                idx.append(master_idx[event].squeeze(1))
 
     # concatenate all events
     event_samples_E_concat = np.concatenate(event_samples_E)
@@ -90,9 +102,10 @@ def plot_model_hits(model, input_data, labels, device="cuda", n_events_to_plot=2
     # reco_samples_y_concat = np.concatenate(reco_samples_y)
     # reco_samples_z_concat = np.concatenate(reco_samples_z)
     # labels_event_concat =  np.concatenate(labels_event)
-    z_e_concat = np.concatenate(z_e)
-    z_q_concat = np.concatenate(z_q)
-    idx_concat = np.concatenate(idx)
+    if vq_out is not None:
+        z_e_concat = np.concatenate(z_e)
+        z_q_concat = np.concatenate(z_q)
+        idx_concat = np.concatenate(idx)
 
    
 
@@ -122,60 +135,62 @@ def plot_model_hits(model, input_data, labels, device="cuda", n_events_to_plot=2
     ax.set_ylabel("Density")
     ax.set_yscale("log")
 
-    # scatter some zq - ze
-    ax = axarr[2]
-    ax.scatter(
-        z_q_concat[:n_scatterpoints_to_plot, 0],
-        z_q_concat[:n_scatterpoints_to_plot, 1],
-        alpha=0.2,
-        s=26,
-        label="z_q",
-    )
-    ax.scatter(
-        z_e_concat[:n_scatterpoints_to_plot, 0],
-        z_e_concat[:n_scatterpoints_to_plot, 1],
-        alpha=0.7,
-        s=26,
-        marker="x",
-        label="z_e",
-    )
-    ax.set_xlabel("$x_0$")
-    ax.set_ylabel("$x_1$")
-    ax.set_title("Data space \nTrue vs reconstructed")
-    ax.legend(loc="upper right")
+    if vq_out is not None:
 
-    ax = axarr[3]
-    ax.scatter(
-        z_q_concat[:n_scatterpoints_to_plot, 0],
-        z_q_concat[:n_scatterpoints_to_plot, 2],
-        alpha=0.2,
-        s=26,
-        label="z_q",
-    )
-    ax.scatter(
-        z_e_concat[:n_scatterpoints_to_plot, 0],
-        z_e_concat[:n_scatterpoints_to_plot, 2],
-        alpha=0.7,
-        s=26,
-        marker="x",
-        label="z_e",
-    )
-    ax.set_xlabel("$x_0$")
-    ax.set_ylabel("$x_2$")
-    ax.set_title("Data space \nTrue vs reconstructed")
-    ax.legend(loc="upper right")
-    # plot the histogram of the codebook indices (i.e. a codebook_size x codebook_size
-    # histogram with each entry in the histogram corresponding to one sample associated
-    # with the corresponding codebook entry)
-    ax = axarr[4]
-    n_codes = model.vq_kwargs["num_codes"]
-    bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
-    ax.hist(idx_concat, bins=bins)
-    ax.set_yscale("log")
-    ax.set_title(
-        "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that" " codebook entry)",
-        fontsize=8,
-    )
+        # scatter some zq - ze
+        ax = axarr[2]
+        ax.scatter(
+            z_q_concat[:n_scatterpoints_to_plot, 0],
+            z_q_concat[:n_scatterpoints_to_plot, 1],
+            alpha=0.2,
+            s=26,
+            label="z_q",
+        )
+        ax.scatter(
+            z_e_concat[:n_scatterpoints_to_plot, 0],
+            z_e_concat[:n_scatterpoints_to_plot, 1],
+            alpha=0.7,
+            s=26,
+            marker="x",
+            label="z_e",
+        )
+        ax.set_xlabel("$x_0$")
+        ax.set_ylabel("$x_1$")
+        ax.set_title("Data space \nTrue vs reconstructed")
+        ax.legend(loc="upper right")
+    
+        ax = axarr[3]
+        ax.scatter(
+            z_q_concat[:n_scatterpoints_to_plot, 0],
+            z_q_concat[:n_scatterpoints_to_plot, 2],
+            alpha=0.2,
+            s=26,
+            label="z_q",
+        )
+        ax.scatter(
+            z_e_concat[:n_scatterpoints_to_plot, 0],
+            z_e_concat[:n_scatterpoints_to_plot, 2],
+            alpha=0.7,
+            s=26,
+            marker="x",
+            label="z_e",
+        )
+        ax.set_xlabel("$x_0$")
+        ax.set_ylabel("$x_2$")
+        ax.set_title("Data space \nTrue vs reconstructed")
+        ax.legend(loc="upper right")
+        # plot the histogram of the codebook indices (i.e. a codebook_size x codebook_size
+        # histogram with each entry in the histogram corresponding to one sample associated
+        # with the corresponding codebook entry)
+        ax = axarr[4]
+        n_codes = model.vq_kwargs["num_codes"]
+        bins = np.linspace(-0.5, n_codes + 0.5, n_codes + 1)
+        ax.hist(idx_concat, bins=bins)
+        ax.set_yscale("log")
+        ax.set_title(
+            "Codebook histogram\n(Each entry corresponds to one sample\nbeing associated with that" " codebook entry)",
+            fontsize=8,
+        )
 
     
     """
@@ -265,16 +280,24 @@ def plot_model_hits(model, input_data, labels, device="cuda", n_events_to_plot=2
 
      # pull the first event for scatter plots
     mask = masks[0]
-    single_event_samples_x = input_data[0, :, 0][mask == 1]
-    single_event_samples_y = input_data[0, :, 1][mask == 1]
+    single_event_samples_r = input_data[0, :, 0][mask == 1]
+    single_event_samples_phi = input_data[0, :, 1][mask == 1]
     single_event_samples_z = input_data[0, :, 2][mask == 1]
-    single_reco_samples_x = reco[0, :, 0][mask == 1]
-    single_reco_samples_y = reco[0, :, 1][mask == 1]
+    single_reco_samples_r = reco[0, :, 0][mask == 1]
+    single_reco_samples_phi = reco[0, :, 1][mask == 1]
     single_reco_samples_z = reco[0, :, 2][mask == 1]
+
+    bins_r = np.linspace(np.min(single_event_samples_r), np.max(single_event_samples_r), 100)
+    bins_phi = np.linspace(np.min(single_event_samples_phi), np.max(single_event_samples_phi), 100)
+    bins_z = np.linspace(np.min(single_event_samples_z), np.max(single_event_samples_z), 100)
+
+    single_event_samples_x = single_event_samples_r*np.cos(single_event_samples_phi)
+    single_event_samples_y = single_event_samples_r*np.sin(single_event_samples_phi)
+    single_reco_samples_x = single_reco_samples_r*np.cos(single_reco_samples_phi)
+    single_reco_samples_y = single_reco_samples_r*np.sin(single_reco_samples_phi)
 
     bins_x = np.linspace(np.min(single_event_samples_x), np.max(single_event_samples_x), 100)
     bins_y = np.linspace(np.min(single_event_samples_y), np.max(single_event_samples_y), 100)
-    bins_z = np.linspace(np.min(single_event_samples_z), np.max(single_event_samples_z), 100)
 
     fig, axarr = plt.subplots(1, 6, figsize=(7*6, 6))
 
@@ -299,26 +322,26 @@ def plot_model_hits(model, input_data, labels, device="cuda", n_events_to_plot=2
 
     # data, x-z
     ax = axarr[2]
-    h = ax.hist2d(single_event_samples_x, single_event_samples_z, bins=[bins_x, bins_z], norm="log", density=True)
-    ax.set_xlabel("$x$")
-    ax.set_ylabel("$z$")
+    h = ax.hist2d(single_event_samples_z, single_event_samples_phi, bins=[bins_z, bins_phi], norm="log", density=True)
+    ax.set_xlabel("$z$")
+    ax.set_ylabel("$\phi$")
     ax.set_title("Data")
     if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
         plt.colorbar(h[3], ax=ax)
 
     # reco, x-z
     ax = axarr[3]
-    h = ax.hist2d(single_reco_samples_x, single_reco_samples_z, bins=[bins_x, bins_z], norm="log", density=True)
-    ax.set_xlabel("$x$")
-    ax.set_ylabel("$z$")
+    h = ax.hist2d(single_reco_samples_z, single_reco_samples_phi, bins=[bins_z, bins_phi], norm="log", density=True)
+    ax.set_xlabel("$z$")
+    ax.set_ylabel("$phi$")
     ax.set_title("Reco")
     if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
         plt.colorbar(h[3], ax=ax)
 
     # data, y-z
     ax = axarr[4]
-    h = ax.hist2d(single_event_samples_y, single_event_samples_z, bins=[bins_y, bins_z], norm="log", density=True)
-    ax.set_xlabel("$y$")
+    h = ax.hist2d(single_event_samples_r, single_event_samples_z, bins=[bins_r, bins_z], norm="log", density=True)
+    ax.set_xlabel("$r$")
     ax.set_ylabel("$z$")
     ax.set_title("Data")
     if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
@@ -326,8 +349,8 @@ def plot_model_hits(model, input_data, labels, device="cuda", n_events_to_plot=2
 
     # reco, y-z
     ax = axarr[5]
-    h = ax.hist2d(single_reco_samples_y, single_reco_samples_z, bins=[bins_y, bins_z], norm="log", density=True)
-    ax.set_xlabel("$y$")
+    h = ax.hist2d(single_reco_samples_r, single_reco_samples_z, bins=[bins_r, bins_z], norm="log", density=True)
+    ax.set_xlabel("$r$")
     ax.set_ylabel("$z$")
     ax.set_title("Reco")
     if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
@@ -346,7 +369,7 @@ def plot_model_hits(model, input_data, labels, device="cuda", n_events_to_plot=2
 
         
         
-def plot_model_patch(batch, patches_chunked_reco, vq_out, num_codes, device="cuda", vit_kwargs={}, n_scatterpoints_to_plot=300, saveas=None):
+def plot_model_patch(batch, patches_chunked_reco, vq_out, num_codes, device="cuda", n_scatterpoints_to_plot=300, saveas=None):
 
     def is_axes_empty(ax):
         return not (ax.lines or ax.patches or ax.collections or ax.images or ax.texts or ax.artists or ax.tables)
@@ -354,55 +377,58 @@ def plot_model_patch(batch, patches_chunked_reco, vq_out, num_codes, device="cud
     # -----------------------------
     # LATENT + CODEBOOK (UNCHANGED)
     # -----------------------------
-    master_z_q = vq_out["z_q"].squeeze(2).detach().cpu().numpy() # (B, P, LATENT_DIM)
-    master_z_e = vq_out["z"].squeeze(2).detach().cpu().numpy() # (B, P, LATENT_DIM)
-    master_idx = vq_out["q"].squeeze(2).detach().cpu().numpy() # (B, P) 
-
-
-
-    # flatten across all batches
-    z_q_concat = np.concatenate([master_z_q[i] for i in range(len(master_z_q))]) # (B*P, LATENT_DIM)
-    z_e_concat = np.concatenate([master_z_e[i] for i in range(len(master_z_e))]) # (B*P, LATENT_DIM)
-    idx_concat = np.concatenate([master_idx[i] for i in range(len(master_idx))]) # (B*P)
+    if vq_out is not None:
+        master_z_q = vq_out["z_q"].squeeze(2).detach().cpu().numpy() # (B, P, LATENT_DIM)
+        master_z_e = vq_out["z"].squeeze(2).detach().cpu().numpy() # (B, P, LATENT_DIM)
+        master_idx = vq_out["q"].squeeze(2).detach().cpu().numpy() # (B, P) 
+    
+    
+    
+        # flatten across all batches
+        z_q_concat = np.concatenate([master_z_q[i] for i in range(len(master_z_q))]) # (B*P, LATENT_DIM)
+        z_e_concat = np.concatenate([master_z_e[i] for i in range(len(master_z_e))]) # (B*P, LATENT_DIM)
+        idx_concat = np.concatenate([master_idx[i] for i in range(len(master_idx))]) # (B*P)
 
 
     # ✅ CHANGED: now 4 panels (added resolution)
     fig, axarr = plt.subplots(1, 4, figsize=(7*4, 7))  # CHANGED
 
-    # scatter z_q vs z_e
-    ax = axarr[0]
-    ind0, ind1 = 0, 1
-    ax.scatter(z_q_concat[:n_scatterpoints_to_plot, ind0],
-               z_q_concat[:n_scatterpoints_to_plot, ind1],
-               alpha=0.2, s=26, label="z_q")
-    ax.scatter(z_e_concat[:n_scatterpoints_to_plot, ind0],
-               z_e_concat[:n_scatterpoints_to_plot, ind1],
-               alpha=0.7, s=26, marker="x", label="z_e")
-    ax.set_xlabel(f"$x_{ind0}$")
-    ax.set_ylabel(f"$x_{ind1}$")
-    ax.set_title("Latent space: z_q vs z_e")
-    ax.legend()
-
-    ax = axarr[1]
-    ind0, ind1 = 0, 2
-    ax.scatter(z_q_concat[:n_scatterpoints_to_plot, ind0],
-               z_q_concat[:n_scatterpoints_to_plot, ind1],
-               alpha=0.2, s=26, label="z_q")
-    ax.scatter(z_e_concat[:n_scatterpoints_to_plot, ind0],
-               z_e_concat[:n_scatterpoints_to_plot, ind1],
-               alpha=0.7, s=26, marker="x", label="z_e")
-    ax.set_xlabel(f"$x_{ind0}$")
-    ax.set_ylabel(f"$x_{ind1}$")
-    ax.set_title("Latent space: z_q vs z_e")
-    ax.legend()
+    if vq_out is not None:
     
-    # codebook usage
-    ax = axarr[2]
-
-    bins = np.linspace(-0.5, num_codes + 0.5, num_codes + 1)
-    ax.hist(idx_concat, bins=bins)
-    ax.set_yscale("log")
-    ax.set_title("Codebook usage")
+        # scatter z_q vs z_e
+        ax = axarr[0]
+        ind0, ind1 = 0, 1
+        ax.scatter(z_q_concat[:n_scatterpoints_to_plot, ind0],
+                   z_q_concat[:n_scatterpoints_to_plot, ind1],
+                   alpha=0.2, s=26, label="z_q")
+        ax.scatter(z_e_concat[:n_scatterpoints_to_plot, ind0],
+                   z_e_concat[:n_scatterpoints_to_plot, ind1],
+                   alpha=0.7, s=26, marker="x", label="z_e")
+        ax.set_xlabel(f"$x_{ind0}$")
+        ax.set_ylabel(f"$x_{ind1}$")
+        ax.set_title("Latent space: z_q vs z_e")
+        ax.legend()
+    
+        ax = axarr[1]
+        ind0, ind1 = 0, 2
+        ax.scatter(z_q_concat[:n_scatterpoints_to_plot, ind0],
+                   z_q_concat[:n_scatterpoints_to_plot, ind1],
+                   alpha=0.2, s=26, label="z_q")
+        ax.scatter(z_e_concat[:n_scatterpoints_to_plot, ind0],
+                   z_e_concat[:n_scatterpoints_to_plot, ind1],
+                   alpha=0.7, s=26, marker="x", label="z_e")
+        ax.set_xlabel(f"$x_{ind0}$")
+        ax.set_ylabel(f"$x_{ind1}$")
+        ax.set_title("Latent space: z_q vs z_e")
+        ax.legend()
+        
+        # codebook usage
+        ax = axarr[2]
+    
+        bins = np.linspace(-0.5, num_codes + 0.5, num_codes + 1)
+        ax.hist(idx_concat, bins=bins)
+        ax.set_yscale("log")
+        ax.set_title("Codebook usage")
 
     # ---------------------------------------
     # NEW: MULTI-EVENT ENERGY RESOLUTION

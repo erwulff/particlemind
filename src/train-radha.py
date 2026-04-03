@@ -26,12 +26,13 @@ from lightning import Trainer, seed_everything
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
-from src.data.colliderMLHits import colliderMLHits
+from src.data.CaloHitDataset import CaloHitDataset
+from src.data.CaloPatchDataset import CaloPatchDataset
 
 from src.data.Tokens import Tokens, TokensSingleFile
 from src.data.patching import build_patch_registry
 
-from src.data.utils import Collater
+from src.data.utils import CollaterPatch, CollaterHits
 from src.models.backbone import BackboneNextTokenPredictionLightning
 
 # from src.models.vae import VAELightning, SSLLightning
@@ -155,54 +156,76 @@ def main(args):
      # MODEL
     if args.train_embedder:
 
-        # build the patch registry
-        with open(f"configs/detector_patching_params.yaml", "r") as file:
-            detector_patching_params = yaml.safe_load(file)[configs_data["system"]]
-            print_rank0(configs)
+        assert configs_data["data_type"] in ["patch", "hit"]
 
-        offsets = {}
-        for i in range(len(detector_patching_params["barrel_configs"]["cells_per_wedge"])):
-            offsets[i] = int((detector_patching_params["barrel_configs"]["cells_per_wedge"][i] - detector_patching_params["barrel_configs"]["cells_per_wedge"][0]) / 2)
-        
-        detector_patching_params["barrel_configs"]["offsets"] = offsets
-
-
-                    
-                
-        patch_registry, unique_patch_sizes_dict, NUM_TOTAL_PATCHES = build_patch_registry(detector_patching_params)
-
-        vit_kwargs = configs_data["vit_kwargs"]
-        vit_kwargs["unique_patch_sizes_dict"] = unique_patch_sizes_dict
-        vit_kwargs["NUM_TOTAL_PATCHES"] = NUM_TOTAL_PATCHES
-
-        # arguments for the positional encoding
-        vit_kwargs["n_phi_per_ring"] = patch_registry["n_phi_per_ring"]
-        vit_kwargs["n_bins_z"] = detector_patching_params["barrel_configs"]["n_bins_z"]
-        configs["model_kwargs"]["input_dim"] = configs_data["vit_kwargs"]["D_EMBEDDING"]
-        
-
-        # DATA
-        train_dataset = colliderMLHits(
-            configs_data["subset"],
-            "train",
-            patch_registry,
-            detector_patching_params,
-            nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
-            train_fraction=configs_data["train_fraction"],
-        )
-        val_dataset = colliderMLHits(
-            configs_data["subset"],
-            "val",
-            patch_registry,
-            detector_patching_params,
-            nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
-            train_fraction=configs_data["train_fraction"],
-        )
+        if configs_data["data_type"] == "patch":
     
+            # build the patch registry
+            with open(f"configs/detector_patching_params.yaml", "r") as file:
+                detector_patching_params = yaml.safe_load(file)[configs_data["system"]]
+                print_rank0(configs)
+    
+            offsets = {}
+            for i in range(len(detector_patching_params["barrel_configs"]["cells_per_wedge"])):
+                offsets[i] = int((detector_patching_params["barrel_configs"]["cells_per_wedge"][i] - detector_patching_params["barrel_configs"]["cells_per_wedge"][0]) / 2)
+            
+            detector_patching_params["barrel_configs"]["offsets"] = offsets                    
+            patch_registry, unique_patch_sizes_dict, NUM_TOTAL_PATCHES = build_patch_registry(detector_patching_params)
+    
+            vit_kwargs = configs_data["vit_kwargs"]
+            vit_kwargs["unique_patch_sizes_dict"] = unique_patch_sizes_dict
+            vit_kwargs["NUM_TOTAL_PATCHES"] = NUM_TOTAL_PATCHES
+    
+            # arguments for the positional encoding
+            vit_kwargs["n_phi_per_ring"] = patch_registry["n_phi_per_ring"]
+            vit_kwargs["n_bins_z"] = detector_patching_params["barrel_configs"]["n_bins_z"]
+            configs["model_kwargs"]["input_dim"] = configs_data["vit_kwargs"]["D_EMBEDDING"]
+            
+    
+            # DATA
+            train_dataset = CaloPatchDataset(
+                configs_data["subset"],
+                "train",
+                patch_registry,
+                detector_patching_params,
+                nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
+                train_fraction=configs_data["train_fraction"],
+            )
+            val_dataset = CaloPatchDataset(
+                configs_data["subset"],
+                "val",
+                patch_registry,
+                detector_patching_params,
+                nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
+                train_fraction=configs_data["train_fraction"],
+            )
+
+            collate_func = CollaterPatch()
+
+        elif configs_data["data_type"] == "hit":
+
+            # DATA
+            train_dataset = CaloHitDataset(
+                configs_data["subset"],
+                "train",
+                nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
+                train_fraction=configs_data["train_fraction"],
+            )
+            val_dataset = CaloHitDataset(
+                configs_data["subset"],
+                "val",
+                nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
+                train_fraction=configs_data["train_fraction"],
+            )
+
+            collate_func = CollaterHits(empty_key="calo_hit_features", pad=configs_data["pad"])
+            vit_kwargs = None
+            configs["model_kwargs"]["input_dim"] = 4
+        
         train_loader = DataLoader(
             train_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
-            collate_fn=Collater(),
+            collate_fn=collate_func,
             num_workers=configs_data["num_workers"],
             persistent_workers=True,
             pin_memory=True,
@@ -210,7 +233,7 @@ def main(args):
         val_loader = DataLoader(
             val_dataset,
             batch_size=configs_data["batch_size_per_gpu"],
-            collate_fn=Collater(),
+            collate_fn=collate_func,
             num_workers=configs_data["num_workers"],
             persistent_workers=True,
             pin_memory=True,
@@ -218,6 +241,7 @@ def main(args):
 
    
         model = VQVAELightning(
+            data_type=configs_data["data_type"],
             optimizer_kwargs=configs["optimizer_kwargs"],
             lr_scheduler_kwargs=configs["lr_scheduler_kwargs"],
             vit_kwargs = vit_kwargs,
