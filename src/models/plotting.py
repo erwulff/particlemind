@@ -128,9 +128,12 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
     ax.set_ylabel("Density")
     ax.legend(loc="upper right")
 
+    tmp = (event_samples_E_concat - reco_samples_E_concat)/event_samples_E_concat
+    mask = ~np.isnan(tmp)
+
     # histogram the difference in energy
     ax = axarr[1]
-    ax.hist((event_samples_E_concat - reco_samples_E_concat)/event_samples_E_concat, bins=50, density=True, histtype="step", linewidth=2)
+    ax.hist(tmp[mask], bins=50, density=True, histtype="step", linewidth=2)
     ax.set_xlabel("$E_{true} - E_{reco}$ /$E_{true}$ ")
     ax.set_ylabel("Density")
     ax.set_yscale("log")
