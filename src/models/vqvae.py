@@ -338,11 +338,13 @@ class VQVAENormFormer(torch.nn.Module):
                 z, vq_out = self.vqlayer(z_embed) # BS, num hits, latent_dim
             else:
                 z, vq_out = z_embed, None
+
             
             # decode
             x_reco = self.latent_projection_out(z) * mask.unsqueeze(-1) # BS, num hits, hidden_dim
             x_reco = self.decoder_normformer(x_reco, mask=mask) # BS, num hits, hidden_dim
             x_reco = self.output_projection(x_reco) * mask.unsqueeze(-1) # BS, num hits, input_dim
+
             
             return x_reco, vq_out, z_embed # CHANGED
 
@@ -469,21 +471,23 @@ class VQVAELightning(L.LightningModule):
             
             if beta != 0:
                 # augment data
-                x_particle_augmented = augment_data(x_particle) # augmentation needs to be done before standardization
+                x_particle_augmented = augment_data(x_particle) # augmentation needs to be done before standardization  
                 x_particle_augmented = standardize_calo_hit_features_rphiz(x_particle_augmented)
                 x_particle_augmented, vq_out_augmented, z_embed_augmented = self.forward(None, x_particle_augmented, mask_particle)
               
             else:
                 ssl_loss = 0
+
     
             x_particle = standardize_calo_hit_features_rphiz(x_particle)
-    
-
+            x_particle = torch.nan_to_num(x_particle, nan=0.0, posinf=0.0, neginf=0.0)
             x_particle_reco, vq_out, z_embed = self.forward(None, x_particle, mask_particle) # batch not used
 
             
             reco_loss = ((x_particle_reco - x_particle) ** 2).mean()
             loss = reco_loss
+
+            
             loss_dict = {"reco_loss": reco_loss}
 
 
@@ -506,7 +510,7 @@ class VQVAELightning(L.LightningModule):
 
 
             loss_dict["total_loss"] = loss
-    
+
             if return_x:
                 return loss_dict, x_particle, x_particle_reco, mask_particle, labels, code_idx
     
@@ -604,7 +608,7 @@ class VQVAELightning(L.LightningModule):
         
         
         for loss_type in loss_dict.keys():
-            self.log(f"val/total_loss", loss_dict[loss_type].item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
+            self.log(f"val/{loss_type}", loss_dict[loss_type].item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
 
         # for the first validation step, plot the model
