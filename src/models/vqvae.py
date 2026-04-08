@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from src.models.optimizers import configure_optimizers_base
 from src.models.positional_encoding import DetectorPosEnc
-from src.data.augmentations import standardize_calo_hit_features_rphiz, augment_data
+from src.data.augmentations import inverse_standardize_calo_hit_features_rphiz, standardize_calo_hit_features_rphiz, augment_data
 from src.models.plotting import plot_model_hit, plot_model_patch
 
 # vqtorch can be installed from https://github.com/minyoungg/vqtorch
@@ -329,9 +329,9 @@ class VQVAENormFormer(torch.nn.Module):
                 batch: TENSOR
             """
             # encode
-            x = self.input_projection(x) # BS, num hits, hidden_dim
-            x = self.encoder_normformer(x, mask=mask) # BS, num hits, hidden_dim
-            z_embed = self.latent_projection_in(x) * mask.unsqueeze(-1)  # BS, num hits, latent_dim
+            x0 = self.input_projection(x) # BS, num hits, hidden_dim
+            x1 = self.encoder_normformer(x0, mask=mask) # BS, num hits, hidden_dim
+            z_embed = self.latent_projection_in(x1) * mask.unsqueeze(-1)  # BS, num hits, latent_dim
             
             # quantize
             if self.vq_kwargs is not None:
@@ -341,10 +341,11 @@ class VQVAENormFormer(torch.nn.Module):
 
             
             # decode
-            x_reco = self.latent_projection_out(z) * mask.unsqueeze(-1) # BS, num hits, hidden_dim
-            x_reco = self.decoder_normformer(x_reco, mask=mask) # BS, num hits, hidden_dim
-            x_reco = self.output_projection(x_reco) * mask.unsqueeze(-1) # BS, num hits, input_dim
+            x_reco0 = self.latent_projection_out(z) * mask.unsqueeze(-1) # BS, num hits, hidden_dim
+            x_reco1 = self.decoder_normformer(x_reco0, mask=mask) # BS, num hits, hidden_dim
+            x_reco = self.output_projection(x_reco1) * mask.unsqueeze(-1) # BS, num hits, input_dim
 
+          
             
             return x_reco, vq_out, z_embed # CHANGED
 
@@ -426,15 +427,17 @@ class VQVAELightning(L.LightningModule):
 
 
 
-    def contrastive_loss(self, z1, z2, temperature=0.1, alpha=1):
+    def contrastive_loss(self, z1, z2, mask, temperature=0.1, alpha=1):
 
-        def pool(z):
+
+        def pool(z, mask):
             # z: (B, N, 1, D)
-            z = z.squeeze(2)  # (B, N, D)
-            return z.mean(dim=1)  # or sum / attention pooling
+            z = z.squeeze(2) # (B, N, D)
+            mask = mask.unsqueeze(-1)
+            return (z * mask).sum(dim=1) / mask.sum(dim=1)
 
-        z1 = pool(z1)
-        z2 = pool(z2)
+        z1 = pool(z1, mask)
+        z2 = pool(z2, mask)
         # inputs have shape (B, latent_dim)
 
         # SimCLR loss
@@ -473,18 +476,20 @@ class VQVAELightning(L.LightningModule):
                 # augment data
                 x_particle_augmented = augment_data(x_particle) # augmentation needs to be done before standardization  
                 x_particle_augmented = standardize_calo_hit_features_rphiz(x_particle_augmented)
-                x_particle_augmented, vq_out_augmented, z_embed_augmented = self.forward(None, x_particle_augmented, mask_particle)
+              
+                _, _, z_embed_augmented = self.forward(None, x_particle_augmented, mask_particle)
               
             else:
                 ssl_loss = 0
 
     
             x_particle = standardize_calo_hit_features_rphiz(x_particle)
-            x_particle = torch.nan_to_num(x_particle, nan=0.0, posinf=0.0, neginf=0.0)
             x_particle_reco, vq_out, z_embed = self.forward(None, x_particle, mask_particle) # batch not used
 
-            
-            reco_loss = ((x_particle_reco - x_particle) ** 2).mean()
+            diff = (x_particle_reco - x_particle) ** 2
+            mask_expanded = mask_particle.unsqueeze(-1)
+
+            reco_loss = (diff * mask_expanded).sum() / mask_expanded.sum()
             loss = reco_loss
 
             
@@ -492,7 +497,7 @@ class VQVAELightning(L.LightningModule):
 
 
             if beta != 0:
-                ssl_loss = self.contrastive_loss(z_embed, z_embed_augmented)
+                ssl_loss = self.contrastive_loss(z_embed, z_embed_augmented, mask_particle)
                 loss += beta * ssl_loss
                 loss_dict["ssl_loss"] = ssl_loss
                 
@@ -519,10 +524,15 @@ class VQVAELightning(L.LightningModule):
         elif self.data_type == "patch":
     
             embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.forward(batch, None, None) # x, mask not used
-            reco_loss = torch.stack([
-                ((patches_chunked[key] - patches_chunked_reco[key]) ** 2).mean()
-                for key in patches_chunked.keys()
-            ]).mean()
+            
+            
+            losses = []
+            for key in patches_chunked.keys():
+                diff = (patches_chunked[key] - patches_chunked_reco[key]) ** 2
+                mask = batch[key]["mask"].unsqueeze(-1)
+                losses.append((diff * mask).sum() / mask.sum())
+
+            reco_loss = torch.stack(losses).mean()
 
             loss = reco_loss
 
@@ -582,13 +592,7 @@ class VQVAELightning(L.LightningModule):
     def on_train_end(self):
         pass
 
-    def on_validation_epoch_start(self) -> None:
-
-        self.val_x_original = []
-        self.val_x_reco = []
-        self.val_mask = []
-        self.val_labels = []
-        self.val_code_idx = []
+    
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
 
@@ -598,14 +602,7 @@ class VQVAELightning(L.LightningModule):
         elif self.data_type == "hit":
             loss_dict, x_original, x_reco, mask, labels, code_idx = self.model_step(batch, return_x=True)
 
- 
-        # save the original and reconstructed data
-        # self.val_x_original.append(x_original.detach().cpu().numpy())
-        # self.val_x_reco.append(x_reco.detach().cpu().numpy())
-        # self.val_mask.append(mask.detach().cpu().numpy())
-        # self.val_labels.append(labels.detach().cpu().numpy())
-        # self.val_code_idx.append(vq_out["q"].detach().cpu().numpy())
-        
+
         
         for loss_type in loss_dict.keys():
             self.log(f"val/{loss_type}", loss_dict[loss_type].item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)

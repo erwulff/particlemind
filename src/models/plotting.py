@@ -34,6 +34,7 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
         # print(f"Model device: {next(model.parameters()).device}")
         # print(f"Samples device: {samples.device}")
         reco, vq_out, _ = model(None, input_data, masks)
+       
 
         
 
@@ -47,12 +48,18 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
             master_z_q = master_z_q.detach().cpu().numpy()
             master_idx = master_idx.detach().cpu().numpy()
 
-    input_data = inverse_standardize_calo_hit_features_rphiz(input_data).detach().cpu().numpy()
+    input_data = input_data.detach().cpu().numpy() # raw data doesn't need to be unstandardized
     reco = inverse_standardize_calo_hit_features_rphiz(reco).detach().cpu().numpy()
+
+
+    
 
     labels = labels.detach().cpu().numpy()
     if masks is not None:
         masks = masks.detach().cpu().numpy()
+
+
+
 
     event_samples_E, event_samples_r, event_samples_phi, event_samples_z = [], [], [], []
     reco_samples_E, reco_samples_r, reco_samples_phi, reco_samples_z = [], [], [], []
@@ -97,6 +104,7 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
     # event_samples_x_concat = np.concatenate(event_samples_x)
     # event_samples_y_concat = np.concatenate(event_samples_y)
     # event_samples_z_concat = np.concatenate(event_samples_z)
+    
     reco_samples_E_concat = np.concatenate(reco_samples_E)
     # reco_samples_x_concat = np.concatenate(reco_samples_x)
     # reco_samples_y_concat = np.concatenate(reco_samples_y)
@@ -120,7 +128,9 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
 
     # histogram the energies
     ax = axarr[0]
-    bins = np.linspace(np.min(event_samples_E_concat), np.max(event_samples_E_concat), 50)
+    all_E = np.concatenate([event_samples_E_concat, reco_samples_E_concat])
+    
+    bins = np.linspace(np.min(all_E),  np.max(all_E), 50)
     ax.hist(event_samples_E_concat, bins=bins, label="samples", density=True, histtype="step", linewidth=2)
     ax.hist(reco_samples_E_concat, bins=bins, label="reco", density=True, histtype="step", linewidth=2)
     ax.set_yscale("log")
@@ -129,11 +139,11 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
     ax.legend(loc="upper right")
 
     tmp = (event_samples_E_concat - reco_samples_E_concat)/event_samples_E_concat
-    mask = ~np.isnan(tmp)
+    mm = (~np.isnan(tmp)) & (~np.isinf(tmp))
 
     # histogram the difference in energy
     ax = axarr[1]
-    ax.hist(tmp[mask], bins=50, density=True, histtype="step", linewidth=2)
+    ax.hist(tmp[mm], bins=50, density=True, histtype="step", linewidth=2)
     ax.set_xlabel("$E_{true} - E_{reco}$ /$E_{true}$ ")
     ax.set_ylabel("Density")
     ax.set_yscale("log")
@@ -257,7 +267,10 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
             hit_clusters_true.append(np.sum(event_samples_E[event_i][mask_event_i_label_i]))
             hit_clusters_reco.append(np.sum(reco_samples_E[event_i][mask_event_i_label_i]))
 
-    ax.hist((np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true), bins=50, density=True, histtype="step", linewidth=2)
+    tmp = (np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true)
+    mm = (~np.isnan(tmp)) & (~np.isinf(tmp))
+
+    ax.hist(tmp[mm], bins=50, density=True, histtype="step", linewidth=2)
     ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{true}$ per cluster")
     ax.set_ylabel("Density")
     ax.set_yscale("log")
@@ -290,17 +303,25 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
     single_reco_samples_phi = reco[0, :, 1][mask == 1]
     single_reco_samples_z = reco[0, :, 2][mask == 1]
 
-    bins_r = np.linspace(np.min(single_event_samples_r), np.max(single_event_samples_r), 100)
-    bins_phi = np.linspace(np.min(single_event_samples_phi), np.max(single_event_samples_phi), 100)
-    bins_z = np.linspace(np.min(single_event_samples_z), np.max(single_event_samples_z), 100)
+    all_r = np.concatenate([single_event_samples_r, single_reco_samples_r])
+    all_phi = np.concatenate([single_event_samples_phi, single_reco_samples_phi])
+    all_z = np.concatenate([single_event_samples_z, single_reco_samples_z])
+ 
+
+    bins_r = np.linspace(np.min(all_r), np.max(all_r), 100)
+    bins_phi = np.linspace(np.min(all_phi), np.max(all_phi), 100)
+    bins_z = np.linspace(np.min(all_z), np.max(all_z), 100)
 
     single_event_samples_x = single_event_samples_r*np.cos(single_event_samples_phi)
     single_event_samples_y = single_event_samples_r*np.sin(single_event_samples_phi)
     single_reco_samples_x = single_reco_samples_r*np.cos(single_reco_samples_phi)
     single_reco_samples_y = single_reco_samples_r*np.sin(single_reco_samples_phi)
 
-    bins_x = np.linspace(np.min(single_event_samples_x), np.max(single_event_samples_x), 100)
-    bins_y = np.linspace(np.min(single_event_samples_y), np.max(single_event_samples_y), 100)
+    all_x = np.concatenate([single_event_samples_x, single_reco_samples_x])
+    all_y = np.concatenate([single_event_samples_y, single_reco_samples_y])
+
+    bins_x = np.linspace(np.min(all_x), np.max(all_x), 100)
+    bins_y = np.linspace(np.min(all_y), np.max(all_y), 100)
 
     fig, axarr = plt.subplots(1, 6, figsize=(7*6, 6))
 

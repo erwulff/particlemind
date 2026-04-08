@@ -18,15 +18,16 @@ def inverse_standardize_calo_hit_features_xyz(calo_hit_features):
 
 
 def standardize_calo_hit_features_rphiz(calo_hit_features):
-    calo_hit_features[..., 0] /= 1e4
-    calo_hit_features[..., 1] /= 1e1
-    calo_hit_features[..., 2] /= 1e4
-    calo_hit_features[..., 3] = torch.log(calo_hit_features[..., 3] * 1e2) / 10
-    return calo_hit_features
+    r     = calo_hit_features[..., 0:1] / 1e4
+    phi   = calo_hit_features[..., 1:2] / 1e1
+    z     = calo_hit_features[..., 2:3] / 1e4
+    logE  = torch.log(calo_hit_features[..., 3:4] * 1e2) / 10
 
+    out = torch.cat([r, phi, z, logE], dim=-1)
+    return torch.nan_to_num(out, posinf=0.0, neginf=0.0)
 
 def inverse_standardize_calo_hit_features_rphiz(calo_hit_features):
-    calo_hit_features[..., 0] *= 1e4
+    calo_hit_features[..., 0] = torch.abs(calo_hit_features[..., 0] * 1e4)
     calo_hit_features[..., 1] *= 1e1
     calo_hit_features[..., 2] *= 1e4
     calo_hit_features[..., 3] = torch.exp(calo_hit_features[..., 3] * 10) / 1e2
