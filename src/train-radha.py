@@ -176,10 +176,12 @@ def main(args):
             vit_kwargs = configs_data["vit_kwargs"]
             vit_kwargs["unique_patch_sizes_dict"] = unique_patch_sizes
             vit_kwargs["NUM_TOTAL_PATCHES"] = NUM_TOTAL_PATCHES
-            vit_kwargs["n_phi_patches"] = patch_registry["n_phi_patches"]
+          
      
             # arguments for the positional encoding
             vit_kwargs["n_bins_z"] = detector_patching_params["barrel_configs"]["n_bins_z"]
+            vit_kwargs["n_phi_patches"] = patch_registry["n_phi_patches"]
+            vit_kwargs["n_rings"] = patch_registry["n_rings"]
             configs["model_kwargs"]["input_dim"] = configs_data["vit_kwargs"]["D_EMBEDDING"]
             
     

@@ -436,30 +436,29 @@
     
 #     return grouped
 
-
 import numpy as np
 from collections import defaultdict
 from typing import Dict, List, Tuple
 import math
 
 """
-detector_vit_patching.py  (v3)
-
-ViT-style patching for LHC-like barrel detector geometry (ECAL/HCAL barrel).
+detector_vit_patching.py  (v5)
 
 Scheme
 ------
-  r   : ALL layers collapsed into one patch (no ring grouping).
-        Cell tensor is a list of n_layers 2-D arrays, each shape
-        (phi_cells_for_layer_and_patch, cells_per_patch_z).
+  r   : layers grouped into rings via `groups`.
+        Cell tensor per patch is a list of n_layers_in_ring 2-D arrays,
+        each shape (phi_size_for_that_layer, cells_per_patch_z).
+        phi_size varies by layer (Bresenham split of that layer's cpw).
   phi : 64 patches = patches_per_wedge (4) × num_wedges (16), wedge-aligned.
-        Within each wedge the phi cells are distributed as:
-            patch i gets  base + (1 if i < remainder else 0)  cells,
-            where base = cells_per_wedge[layer] // patches_per_wedge
-                  remainder = cells_per_wedge[layer] % patches_per_wedge
-        The same patch indices (0, 1, …) always hold the larger slices,
-        consistently across all layers.
-  z   : driven by cells_per_patch_z from config, same as before.
+        Per-layer Bresenham split: patch i gets
+            base + (1 if i < remainder else 0)  cells,
+            base = cells_per_wedge[layer] // patches_per_wedge
+            remainder = cells_per_wedge[layer] % patches_per_wedge
+        Patch 0 always gets the larger slice, consistently across layers.
+  z   : driven by cells_per_patch_z.
+
+Total patches = n_rings × n_phi_patches × n_z_patches.
 """
 
 _PATCHES_PER_WEDGE = 4
@@ -467,64 +466,64 @@ _NUM_WEDGES        = 16
 _N_PHI_PATCHES     = _PATCHES_PER_WEDGE * _NUM_WEDGES   # 64
 
 
-def _phi_patch_sizes_for_layer(
+# --------------------------------------------------------------------------- #
+# Phi geometry helpers (per-layer, as in v3)
+# --------------------------------------------------------------------------- #
+
+def _phi_patch_sizes_for_cpw(
     cpw: int,
     patches_per_wedge: int = _PATCHES_PER_WEDGE,
 ) -> List[int]:
     """
-    Return a list of length patches_per_wedge giving the number of phi cells
-    in each within-wedge patch for a layer with cpw cells per wedge.
-
-    Patch 0 always gets the largest slice; remainder patches (0..r-1) each
-    get one extra cell over the base.
-
     Example: cpw=23, patches=4  →  [6, 6, 6, 5]
              cpw=25, patches=4  →  [7, 6, 6, 6]
-             cpw=45, patches=4  →  [12, 11, 11, 11]   (45=4*11+1)
+             cpw=45, patches=4  →  [12, 11, 11, 11]
     """
     base      = cpw // patches_per_wedge
     remainder = cpw %  patches_per_wedge
     return [base + (1 if i < remainder else 0) for i in range(patches_per_wedge)]
 
 
-
-def _phi_patch_starts_for_layer(
+def _phi_patch_starts_for_cpw(
     cpw: int,
     patches_per_wedge: int = _PATCHES_PER_WEDGE,
 ) -> List[int]:
-    """
-    Return the starting phi-cell offset (within a wedge) for each patch.
-    """
-    sizes  = _phi_patch_sizes_for_layer(cpw, patches_per_wedge)
+    """Starting phi-cell offset within a wedge for each within-wedge patch."""
+    sizes  = _phi_patch_sizes_for_cpw(cpw, patches_per_wedge)
     starts = [0] * patches_per_wedge
     for i in range(1, patches_per_wedge):
         starts[i] = starts[i - 1] + sizes[i - 1]
     return starts
 
 
-
+# --------------------------------------------------------------------------- #
+# Registry
+# --------------------------------------------------------------------------- #
 
 def build_patch_registry(
     detector_patching_params: Dict,
     num_wedges:        int = _NUM_WEDGES,
     patches_per_wedge: int = _PATCHES_PER_WEDGE,
-) -> Tuple[dict, int]:
+) -> Tuple[dict, dict, int]:
     """
     Build the complete patch registry for a barrel sub-detector.
 
     Returns
     -------
-    registry      : dict with full patch metadata
-    total_patches : int
+    registry          : dict with full patch metadata
+    unique_patch_sizes: dict keyed by (ring_idx, within_wedge_idx) ->
+                        total number of cells in that patch shape
+    total_patches     : int
     """
-    cfg           = detector_patching_params["barrel_configs"]
-    cell_size     = detector_patching_params["cell_size"]
-    layer_width   = detector_patching_params["layer_width"]
+    cfg         = detector_patching_params["barrel_configs"]
+    cell_size   = detector_patching_params["cell_size"]
+    layer_width = detector_patching_params["layer_width"]
 
-    cells_per_wedge   = cfg["cells_per_wedge"]      # Dict[int, int]
-    cells_per_patch_z = cfg["cells_per_patch_z"]    # int
+    cells_per_wedge   = cfg["cells_per_wedge"]
+    cells_per_patch_z = cfg["cells_per_patch_z"]
     num_cells_z       = cfg["n_bins_z"]
-    n_layers          = cfg["n_bins_x"]
+    n_layers_total    = cfg["n_bins_x"]
+    groups            = cfg["groups"]
 
     r_start = cfg["x_start_midpoint"] - layer_width / 2
     r_stop  = cfg["x_stop_midpoint"]  + layer_width / 2
@@ -535,26 +534,40 @@ def build_patch_registry(
         "n_bins_z must be divisible by cells_per_patch_z"
 
     n_z_patches   = num_cells_z // cells_per_patch_z
-    n_phi_patches = patches_per_wedge * num_wedges   # 64
+    n_phi_patches = patches_per_wedge * num_wedges
+    n_rings       = len(groups) - 1
+
+    # ------------------------------------------------------------------ #
+    # Ring <-> layer mappings
+    # ------------------------------------------------------------------ #
+    ring_to_layers: Dict[int, Tuple[int, int]] = {}
+    layer_to_ring:  Dict[int, int]             = {}
+    for ring_idx, (g_start, g_stop) in enumerate(zip(groups[:-1], groups[1:])):
+        ring_to_layers[ring_idx] = (g_start, g_stop - 1)
+        for l in range(g_start, g_stop):
+            layer_to_ring[l] = ring_idx
 
     # ------------------------------------------------------------------ #
     # Per-layer phi patch geometry
     # ------------------------------------------------------------------ #
-    # sizes_by_layer[layer][within_wedge_patch_idx] = number of phi cells
-    sizes_by_layer  = {
-        l: _phi_patch_sizes_for_layer(cells_per_wedge[l], patches_per_wedge)
-        for l in range(n_layers)
+    layer_phi_sizes:  Dict[int, List[int]] = {
+        l: _phi_patch_sizes_for_cpw(cells_per_wedge[l], patches_per_wedge)
+        for l in range(n_layers_total)
     }
-    # starts_by_layer[layer][within_wedge_patch_idx] = start phi-cell within wedge
-    starts_by_layer = {
-        l: _phi_patch_starts_for_layer(cells_per_wedge[l], patches_per_wedge)
-        for l in range(n_layers)
+    layer_phi_starts: Dict[int, List[int]] = {
+        l: _phi_patch_starts_for_cpw(cells_per_wedge[l], patches_per_wedge)
+        for l in range(n_layers_total)
     }
 
     # ------------------------------------------------------------------ #
     # Continuous centre coordinates
     # ------------------------------------------------------------------ #
-    r_center = (r_start + r_stop) / 2.0
+    r_edges   = np.linspace(r_start, r_stop, n_layers_total + 1)
+    r_centers = (r_edges[:-1] + r_edges[1:]) / 2
+
+    def _ring_r_center(ring_idx: int) -> float:
+        l_start, l_stop = ring_to_layers[ring_idx]
+        return float(np.mean(r_centers[l_start:l_stop + 1]))
 
     z_edges         = np.linspace(z_start, z_stop, num_cells_z + 1)
     z_cell_centers  = (z_edges[:-1] + z_edges[1:]) / 2
@@ -573,79 +586,83 @@ def build_patch_registry(
     # ------------------------------------------------------------------ #
     registry = {
         "patches":            [],
-        "index":              {},   # (phi_idx, z_idx) -> patch_id
+        "index":              {},   # (ring_idx, phi_idx, z_idx) -> patch_id
+        "n_rings":            n_rings,
         "n_phi_patches":      n_phi_patches,
         "n_z_patches":        n_z_patches,
-        "n_layers":           n_layers,
         "cells_per_patch_z":  cells_per_patch_z,
-        # per-layer phi geometry (needed by assignment function)
-        "sizes_by_layer":     sizes_by_layer,
-        "starts_by_layer":    starts_by_layer,
-        "cells_per_wedge":    cells_per_wedge,
         "patches_per_wedge":  patches_per_wedge,
+        "num_wedges":         num_wedges,
+        "ring_to_layers":     ring_to_layers,
+        "layer_to_ring":      layer_to_ring,
+        "layer_phi_sizes":    layer_phi_sizes,
+        "layer_phi_starts":   layer_phi_starts,
     }
 
     patch_id = 0
-    for phi_idx in range(n_phi_patches):
-        wedge_idx        = phi_idx // patches_per_wedge
-        within_wedge_idx = phi_idx %  patches_per_wedge
+    for ring_idx in range(n_rings):
+        l_start, l_stop  = ring_to_layers[ring_idx]
+        n_layers_in_ring = l_stop - l_start + 1
+        rc               = _ring_r_center(ring_idx)
 
-        for z_idx in range(n_z_patches):
-            info = {
-                "patch_id":         patch_id,
-                "phi_idx":          phi_idx,
-                "z_idx":            z_idx,
-                "wedge_idx":        wedge_idx,
-                "within_wedge_idx": within_wedge_idx,
-                "r_center":         float(r_center),
-                "phi_center":       float(phi_patch_centers[phi_idx]),
-                "z_center":         float(z_patch_centers[z_idx]),
-                "z_cell_start":     z_idx * cells_per_patch_z,
-                "z_cell_stop":      (z_idx + 1) * cells_per_patch_z - 1,
-                # per-layer phi cell counts for this patch position
-                "phi_sizes_by_layer":  [sizes_by_layer[l][within_wedge_idx]
-                                        for l in range(n_layers)],
-                "phi_starts_by_layer": [starts_by_layer[l][within_wedge_idx]
-                                        for l in range(n_layers)],
-            }
-            registry["patches"].append(info)
-            registry["index"][(phi_idx, z_idx)] = patch_id
-            patch_id += 1
+        for phi_idx in range(n_phi_patches):
+            wedge_idx        = phi_idx // patches_per_wedge
+            within_wedge_idx = phi_idx %  patches_per_wedge
+
+            for z_idx in range(n_z_patches):
+                info = {
+                    "patch_id":          patch_id,
+                    "ring_idx":          ring_idx,
+                    "phi_idx":           phi_idx,
+                    "z_idx":             z_idx,
+                    "wedge_idx":         wedge_idx,
+                    "within_wedge_idx":  within_wedge_idx,
+                    "layer_start":       l_start,
+                    "layer_stop":        l_stop,
+                    "n_layers_in_ring":  n_layers_in_ring,
+                    "r_center":          rc,
+                    "phi_center":        float(phi_patch_centers[phi_idx]),
+                    "z_center":          float(z_patch_centers[z_idx]),
+                    "z_cell_start":      z_idx * cells_per_patch_z,
+                    "z_cell_stop":       (z_idx + 1) * cells_per_patch_z - 1,
+                }
+                registry["patches"].append(info)
+                registry["index"][(ring_idx, phi_idx, z_idx)] = patch_id
+                patch_id += 1
+
+    # ------------------------------------------------------------------ #
+    # Unique patch sizes keyed by (ring_idx, within_wedge_idx)
+    # ------------------------------------------------------------------ #
+    unique_patch_sizes: Dict[Tuple[int, int], int] = {}
+    for ring_idx in range(n_rings):
+        l_start, l_stop  = ring_to_layers[ring_idx]
+        n_layers_in_ring = l_stop - l_start + 1
+        for ww in range(patches_per_wedge):
+            total_cells = sum(
+                layer_phi_sizes[l][ww] for l in range(l_start, l_stop + 1)
+            ) * cells_per_patch_z
+            unique_patch_sizes[(ring_idx, ww)] = total_cells
 
     # ------------------------------------------------------------------ #
     # Summary
     # ------------------------------------------------------------------ #
     print(f"[Registry] {patch_id} total patches")
-    print(f"           {n_phi_patches} phi patches "
-          f"({patches_per_wedge} per wedge × {num_wedges} wedges)")
-    print(f"           {n_z_patches} z patches (cells_per_patch_z={cells_per_patch_z})")
-    print(f"           {n_layers} layers all collapsed into each patch")
-    print(f"           phi cells per patch, sample layers:")
-    for l in [0, n_layers // 2, n_layers - 1]:
-        print(f"             layer {l:2d} (cpw={cells_per_wedge[l]:3d}): "
-              f"patch sizes within wedge = {sizes_by_layer[l]}")
-        
-    # get dict of the unique patch sizes
-    # in this case, we know there should be only 4, corresponding to the 4 within-wedge patch sizes
-
-    unique_patch_sizes = defaultdict(int)
-
-
-    for p in registry["patches"]:
-        ww_ind = p["within_wedge_idx"]
-        if ww_ind not in unique_patch_sizes.keys():
-            num_cells_total = sum(p["phi_sizes_by_layer"]) * registry["cells_per_patch_z"]
-            unique_patch_sizes[ww_ind] = num_cells_total
-        if len(unique_patch_sizes) == patches_per_wedge:
-            break
-            
-      
-        
+    print(f"           {n_rings} rings × {n_phi_patches} phi × {n_z_patches} z")
+    print(f"           cells_per_patch_z = {cells_per_patch_z}")
+    print(f"           sample phi patch sizes (within-wedge) per ring:")
+    for r in range(n_rings):
+        l_start, l_stop = ring_to_layers[r]
+        sample_layer    = l_start
+        print(f"             ring {r:2d} "
+              f"(layers {l_start:2d}–{l_stop:2d}, "
+              f"cpw[{sample_layer}]={cells_per_wedge[sample_layer]:3d}): "
+              f"phi sizes (first layer) = {layer_phi_sizes[sample_layer]}")
 
     return registry, unique_patch_sizes, patch_id
 
 
-
+# --------------------------------------------------------------------------- #
+# Hit → cell indices
 # --------------------------------------------------------------------------- #
 
 def _hits_to_cell_indices_barrel(
@@ -655,20 +672,14 @@ def _hits_to_cell_indices_barrel(
     detector_patching_params: dict,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Map (x, y, z) hit coordinates to discrete cell indices.
-
     Returns
     -------
-    layer_idx      : radial layer index            (0 … n_layers-1)
-    sector_idx     : wedge/sector index            (0 … num_wedges-1)
-    within_wedge_phi_idx : phi-cell index within the wedge for this layer
+    layer_idx            : radial layer index            (0 … n_layers-1)
+    sector_idx           : wedge/sector index            (0 … num_wedges-1)
+    within_wedge_phi_idx : phi-cell index within the wedge
                            (0 … cells_per_wedge[layer]-1)
-    z_cell_idx     : longitudinal cell index       (0 … n_bins_z-1)
-    valid          : boolean mask of in-range hits
-
-    Note: returning sector_idx and within_wedge_phi_idx separately (rather
-    than a global phi index) makes the variable-patch-size mapping in
-    assign_hits_to_patches_barrel straightforward.
+    z_cell_idx           : longitudinal cell index       (0 … n_bins_z-1)
+    valid                : boolean mask of in-range hits
     """
     n_sectors  = 16
     half_wedge = np.pi / n_sectors
@@ -690,13 +701,11 @@ def _hits_to_cell_indices_barrel(
     cells_per_wedge = cfg["cells_per_wedge"]
     offsets         = cfg["offsets"]
 
-    # --- wedge / sector ---
     angles              = np.arctan2(y, x)
     angles[angles < 0] += 2 * np.pi
     angles_shifted      = (angles + half_wedge) % (2 * np.pi)
     sector_idx          = (angles_shifted / (2 * np.pi) * n_sectors).astype(int)
 
-    # --- rotate each hit to the sector-0 frame ---
     delta_theta   = 2 * np.pi / n_sectors
     theta_center  = (sector_idx + 0.5) * delta_theta
     theta_center0 = 0.5 * delta_theta
@@ -712,15 +721,14 @@ def _hits_to_cell_indices_barrel(
     y_cell_idx           = np.digitize(y_local, y_edges) - 1
     z_cell_idx           = np.digitize(z,       z_edges) - 1
 
-    # --- within-wedge phi index (offset-corrected, per original code) ---
     max_layer  = max(cells_per_wedge.keys()) + 1
     offset_arr = np.array([offsets[35 - i] for i in range(max_layer)])
     within_wedge_phi_idx = y_cell_idx - offset_arr[layer_idx]
 
     bad = (
-        (layer_idx           < 0) | (layer_idx           >= n_bins_x) |
-        (y_cell_idx          < 0) | (y_cell_idx          >= n_bins_y) |
-        (z_cell_idx          < 0) | (z_cell_idx          >= n_bins_z) |
+        (layer_idx            < 0) | (layer_idx            >= n_bins_x) |
+        (y_cell_idx           < 0) | (y_cell_idx           >= n_bins_y) |
+        (z_cell_idx           < 0) | (z_cell_idx           >= n_bins_z) |
         (within_wedge_phi_idx < 0)
     )
     if bad.any():
@@ -730,6 +738,8 @@ def _hits_to_cell_indices_barrel(
 
 
 # --------------------------------------------------------------------------- #
+# Hit → patch assignment
+# --------------------------------------------------------------------------- #
 
 def assign_hits_to_patches_barrel(
     x:        np.ndarray,
@@ -738,24 +748,24 @@ def assign_hits_to_patches_barrel(
     energy:   np.ndarray,
     registry: dict,
     detector_patching_params: dict,
-) -> Dict[int, Dict]:
+) -> Dict:
     """
-    Assign hits to ViT patches and return per-patch data.
+    Assign hits to ViT patches and return grouped per-patch data.
 
     Cell tensor layout
     ------------------
-    result[patch_id]["cell_tensor"] is a list of n_layers 2-D arrays:
-        cell_tensor[layer]  →  np.ndarray shape (phi_size_for_layer, cells_per_patch_z)
-    where phi_size_for_layer = sizes_by_layer[layer][within_wedge_patch_idx].
+    Each patch stores a list of n_layers_in_ring 2-D arrays:
+        cell_tensor[local_layer_idx] → np.ndarray (phi_size_for_layer, cells_per_patch_z)
+    phi_size varies by layer (Bresenham split of that layer's cpw).
 
     Returns
     -------
-    dict keyed by patch_id, each value:
+    grouped : dict keyed by (ring_idx, within_wedge_idx), each value:
         {
-          "cell_tensor"  : list of np.ndarray, length n_layers
-          "true_coords"  : np.ndarray [r_center, phi_center, z_center]
-          "index_coords" : np.ndarray [phi_idx, z_idx]
-          "n_hits"       : int
+          "flat_tensor"      : np.ndarray (n_patches, n_cells_in_patch)
+          "global_patch_ids" : np.ndarray (n_patches,)
+          "local_patch_ids"  : np.ndarray (n_patches, 3)  [ring, phi, z]
+          "patch_positions"  : np.ndarray (n_patches, 3)  [r, phi, z]
         }
     """
     x      = np.asarray(x,      dtype=float)
@@ -763,150 +773,128 @@ def assign_hits_to_patches_barrel(
     z      = np.asarray(z,      dtype=float)
     energy = np.asarray(energy, dtype=float)
 
-    cfg               = detector_patching_params["barrel_configs"]
     cells_per_patch_z = registry["cells_per_patch_z"]
     patches_per_wedge = registry["patches_per_wedge"]
-    sizes_by_layer    = registry["sizes_by_layer"]
-    starts_by_layer   = registry["starts_by_layer"]
-    n_layers          = registry["n_layers"]
+    ring_to_layers    = registry["ring_to_layers"]
+    layer_to_ring     = registry["layer_to_ring"]
+    layer_phi_sizes   = registry["layer_phi_sizes"]
+    layer_phi_starts  = registry["layer_phi_starts"]
+    n_rings           = registry["n_rings"]
+    n_layers_total    = max(layer_to_ring.keys()) + 1
 
     # ------------------------------------------------------------------ #
-    # Step 1: cell indices for every hit
+    # Step 1: cell indices
     # ------------------------------------------------------------------ #
     layer_idx, sector_idx, within_wedge_phi, z_cell_idx, valid = \
         _hits_to_cell_indices_barrel(x, y, z, detector_patching_params)
 
     # ------------------------------------------------------------------ #
-    # Step 2: map each hit to (phi_patch_idx, z_patch_idx)
-    #         and local position within the patch
+    # Step 2: map hits to (ring_idx, phi_patch_idx, z_patch_idx)
     # ------------------------------------------------------------------ #
-    # For each hit we need to know which within-wedge patch it lands in.
-    # The starts_by_layer table gives the phi-cell boundary for each patch
-    # within the wedge, but those boundaries are layer-dependent.
-    # We vectorise over hits using the per-layer starts arrays.
+    hit_layer  = layer_idx[valid]
+    hit_sector = sector_idx[valid]
+    hit_ww_phi = within_wedge_phi[valid]
+    hit_z_cell = z_cell_idx[valid]
+    hit_energy = energy[valid]
 
-    # starts_arr[layer, within_wedge_patch] = start phi-cell in wedge
+    layer_to_ring_arr = np.array(
+        [layer_to_ring[l] for l in range(n_layers_total)], dtype=int
+    )
+    hit_ring = layer_to_ring_arr[hit_layer]
+
+    # starts_arr[layer, within_wedge_patch] — shape (n_layers, patches_per_wedge)
     starts_arr = np.array(
-        [starts_by_layer[l] for l in range(n_layers)],
-        dtype=int
-    )  # shape (n_layers, patches_per_wedge)
+        [layer_phi_starts[l] for l in range(n_layers_total)], dtype=int
+    )
 
-    # For each hit: find which within-wedge patch it belongs to.
-    # starts_arr[layer] gives the left edges; we want the last patch
-    # whose start <= within_wedge_phi for that hit.
-    hit_layer    = layer_idx[valid]
-    hit_sector   = sector_idx[valid]
-    hit_ww_phi   = within_wedge_phi[valid]
-    hit_z_cell   = z_cell_idx[valid]
-    hit_energy   = energy[valid]
-
-    # starts_arr[hit_layer] → shape (n_valid, patches_per_wedge)
-    patch_starts = starts_arr[hit_layer]                      # (n_valid, patches_per_wedge) # getting the starts array for that particular hit, i.d the starts for that layer
-    # within-wedge patch index = last patch whose start <= within_wedge_phi
+    patch_starts = starts_arr[hit_layer]                          # (n_valid, patches_per_wedge)
     ww_patch_idx = np.sum(patch_starts <= hit_ww_phi[:, None], axis=1) - 1
     ww_patch_idx = np.clip(ww_patch_idx, 0, patches_per_wedge - 1)
 
-    
     phi_patch_idx = hit_sector * patches_per_wedge + ww_patch_idx
     z_patch_idx   = hit_z_cell // cells_per_patch_z
 
-
-
-
-    # local position within the patch
     phi_local = hit_ww_phi - patch_starts[np.arange(len(hit_layer)), ww_patch_idx]
     z_local   = hit_z_cell % cells_per_patch_z
 
-
-    # for i in range(10):
-    #     print("For hit ", i)
-    #     print("hit_layer:", hit_layer[i])
-    #     print("hit_sector:", hit_sector[i])
-    #     print("hit_ww_phi:", hit_ww_phi[i])
-    #     print("hit_z_cell:", hit_z_cell[i])
-    #     print("patch_starts:", patch_starts[i])
-    #     print("ww_patch_idx:", ww_patch_idx[i])
-    #     print("phi_patch_idx:", phi_patch_idx[i])
-    #     print("z_patch_idx:", z_patch_idx[i])
-    #     print("phi_local:", phi_local[i])
-    #     print("z_local:", z_local[i])
-    #     print()
+    ring_layer_starts_arr = np.array(
+        [ring_to_layers[r][0] for r in range(n_rings)], dtype=int
+    )
+    layer_local = hit_layer - ring_layer_starts_arr[hit_ring]
 
     # ------------------------------------------------------------------ #
     # Step 3: pre-allocate result dict
     # ------------------------------------------------------------------ #
     result: Dict[int, Dict] = {}
     for p in registry["patches"]:
-        pid = p["patch_id"]
-        ww  = p["within_wedge_idx"]
+        pid              = p["patch_id"]
+        ring_idx         = p["ring_idx"]
+        ww               = p["within_wedge_idx"]
+        l_start          = p["layer_start"]
+        l_stop           = p["layer_stop"]
+        n_layers_in_ring = p["n_layers_in_ring"]
+
         result[pid] = {
             "cell_tensor": [
-                np.zeros((sizes_by_layer[l][ww], cells_per_patch_z), dtype=np.float32)
-                for l in range(n_layers)
+                np.zeros((layer_phi_sizes[l][ww], cells_per_patch_z), dtype=np.float32)
+                for l in range(l_start, l_stop + 1)
             ],
             "true_coords":  np.array(
                 [p["r_center"], p["phi_center"], p["z_center"]], dtype=np.float32
             ),
-            "index_coords": np.array([p["phi_idx"], p["z_idx"]], dtype=np.int32),
-            "n_hits": 0,
-            "within_wedge_idx": ww,  # for grouping later
+            "index_coords": np.array(
+                [p["ring_idx"], p["phi_idx"], p["z_idx"]], dtype=np.int32
+            ),
+            "n_hits":           0,
+            "ring_idx":         ring_idx,
+            "within_wedge_idx": ww,
         }
 
     # ------------------------------------------------------------------ #
-    # Step 4: scatter hits into cell tensors
+    # Step 4: scatter
     # ------------------------------------------------------------------ #
     for i in range(len(hit_layer)):
-        key = (int(phi_patch_idx[i]), int(z_patch_idx[i]))
+        key = (int(hit_ring[i]), int(phi_patch_idx[i]), int(z_patch_idx[i]))
         pid = registry["index"].get(key)
         if pid is None:
             print(f"  No patch for key {key} — skipping hit")
             continue
 
-        l  = int(hit_layer[i])
+        ll = int(layer_local[i])
         pl = int(phi_local[i])
         zl = int(z_local[i])
 
-        # guard against ceiling-division edge: pl should never reach the
-        # tensor's phi dimension, but clamp just in case
-        max_pl = result[pid]["cell_tensor"][l].shape[0] - 1
+        max_pl = result[pid]["cell_tensor"][ll].shape[0] - 1
         if pl > max_pl:
             pl = max_pl
 
-        result[pid]["cell_tensor"][l][pl, zl] += hit_energy[i]
+        result[pid]["cell_tensor"][ll][pl, zl] += hit_energy[i]
         result[pid]["n_hits"] += 1
 
-
-    
-    # CHANGED: group by shape
+    # ------------------------------------------------------------------ #
+    # Step 5: group by (ring_idx, within_wedge_idx) and stack
+    # ------------------------------------------------------------------ #
     grouped = defaultdict(lambda: {
-        "flat_tensor": [],
+        "flat_tensor":      [],
         "global_patch_ids": [],
-
-
-
-        "local_patch_ids": [],
-        "patch_positions": [],
+        "local_patch_ids":  [],
+        "patch_positions":  [],
     })
-    
-    for patch_id in result.keys():
-        tensor = result[patch_id]["cell_tensor"]
 
-        
-        flat_tensor = np.concatenate([t for t in tensor])  # shape: (sum of phi_sizes, cells_per_patch_z)
-    
-        grouped[result[patch_id]["within_wedge_idx"]]["flat_tensor"].append(flat_tensor.reshape(-1))  # CHANGED: flatten here
-        grouped[result[patch_id]["within_wedge_idx"]]["global_patch_ids"].append(patch_id)
-        grouped[result[patch_id]["within_wedge_idx"]]["local_patch_ids"].append(result[patch_id]["index_coords"].reshape(-1))
-        grouped[result[patch_id]["within_wedge_idx"]]["patch_positions"].append(result[patch_id]["true_coords"].reshape(-1))
-    
-    # stack
-    for within_wedge_idx in grouped.keys():
-        grouped[within_wedge_idx]["flat_tensor"] = np.stack(grouped[within_wedge_idx]["flat_tensor"]) # shape: n_patches, n_cells_in_patch
-        grouped[within_wedge_idx]["global_patch_ids"] = np.array(grouped[within_wedge_idx]["global_patch_ids"])
-        grouped[within_wedge_idx]["local_patch_ids"] = np.array(grouped[within_wedge_idx]["local_patch_ids"])
-        grouped[within_wedge_idx]["patch_positions"] = np.array(grouped[within_wedge_idx]["patch_positions"])
+    for pid, data in result.items():
+        key         = str((data["ring_idx"], data["within_wedge_idx"]))
+        flat_tensor = np.concatenate([t.reshape(-1) for t in data["cell_tensor"]])
+
+        grouped[key]["flat_tensor"].append(flat_tensor)
+        grouped[key]["global_patch_ids"].append(pid)
+        grouped[key]["local_patch_ids"].append(data["index_coords"])
+        grouped[key]["patch_positions"].append(data["true_coords"])
+
+    for key in grouped:
+        grouped[key]["flat_tensor"]      = np.stack(grouped[key]["flat_tensor"])
+        grouped[key]["global_patch_ids"] = np.array(grouped[key]["global_patch_ids"])
+        grouped[key]["local_patch_ids"]  = np.stack(grouped[key]["local_patch_ids"])
+        grouped[key]["patch_positions"]  = np.stack(grouped[key]["patch_positions"])
 
 
-    
     return grouped
-

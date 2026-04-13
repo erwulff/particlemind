@@ -3,7 +3,7 @@
 subset: "ttbar_pu0_calo_hits"
 train_fraction: 0.8
 batch_size_per_gpu: 2
-pad: 8000
+pad: 10000
 n_samples_total: 50000
 num_workers: 2
 

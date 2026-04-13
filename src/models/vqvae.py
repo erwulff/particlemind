@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from src.models.optimizers import configure_optimizers_base
 from src.models.positional_encoding import DetectorPosEnc
-from src.data.augmentations import inverse_standardize_calo_hit_features_rphiz, standardize_calo_hit_features_rphiz, augment_data
+from src.data.augmentations import inverse_standardize_calo_hit_features_xyz, standardize_calo_hit_features_xyz, augment_data
 from src.models.plotting import plot_model_hit, plot_model_patch
 
 # vqtorch can be installed from https://github.com/minyoungg/vqtorch
@@ -219,14 +219,13 @@ class VQVAENormFormer(torch.nn.Module):
 
           # ViT components
           # each patch size needs its own linear encoder
-          self.linear_projection_encoders, self.linear_projection_decoders = torch.nn.ModuleDict(), torch.nn.ModuleDict()
+          self.linear_projection_encoders = torch.nn.ModuleDict()
           for key in vit_kwargs["unique_patch_sizes_dict"].keys():
-              num_bins_in_patch = np.prod([k for k in key])
-              self.linear_projection_encoders[str(key)] = torch.nn.Linear(num_bins_in_patch, vit_kwargs["D_EMBEDDING"])
-              self.linear_projection_decoders[str(key)] = torch.nn.Linear(vit_kwargs["D_EMBEDDING"], num_bins_in_patch)
+              self.linear_projection_encoders[str(key)] = torch.nn.Linear(vit_kwargs["unique_patch_sizes_dict"][key], vit_kwargs["D_EMBEDDING"], bias=False) # no bias so transpose = inverse
 
           self.positional_encoding = DetectorPosEnc(
-              phi_max_per_r = vit_kwargs["n_phi_per_ring"],
+              n_rings = vit_kwargs["n_rings"],
+              n_phi = vit_kwargs["n_phi_patches"],
               n_z =  vit_kwargs["n_bins_z"],
               d_latent = vit_kwargs["D_EMBEDDING"],
           )        
@@ -255,26 +254,28 @@ class VQVAENormFormer(torch.nn.Module):
             embeddings = []
             global_patch_ids = []
             local_patch_ids = []
-            mask = []
+            patch_mask = []
             patch_group_sizes = []  # track how many patches per group, for splitting later
+
+            keys = list(sorted(batch.keys()))
         
             # 1. encode each patch group
-            for key in sorted(batch.keys()):
-                key_str = str(key)
-    
-                emb = self.linear_projection_encoders[key_str](batch[key]["flat_tensor"])  # (B, P_k, D) P_k = num. patches per key. should have sum P_k = P
+            for key in keys:
+
+           
+                emb = self.linear_projection_encoders[str(key)](batch[key]["flat_tensor"])  # (B, P_k, D) P_k = num. patches per key. should have sum P_k = P
                 P_k = emb.shape[1]
                 embeddings.append(emb)
                 global_patch_ids.append(batch[key]["global_patch_ids"])
                 local_patch_ids.append(batch[key]["local_patch_ids"])
-                mask.append(batch[key]["mask"])
+                patch_mask.append(batch[key]["mask"])
                 patch_group_sizes.append(P_k)
     
             # 2. concatenate all patches
             embeddings       = torch.cat(embeddings,       dim=1)  # (B, P_total, D)
             global_patch_ids = torch.cat(global_patch_ids, dim=1)  # (B, P_total)
             local_patch_ids  = torch.cat(local_patch_ids,  dim=1)  # (B, P_total, 3)
-            mask             = torch.cat(mask,             dim=1)  # (B, P_total)
+            patch_mask       = torch.cat(patch_mask,             dim=1)  # (B, P_total)
         
             # 3. reorder all tensors by global patch id
             order   = torch.argsort(global_patch_ids, dim=1)
@@ -283,7 +284,7 @@ class VQVAENormFormer(torch.nn.Module):
         
             embeddings      = torch.gather(embeddings,      dim=1, index=order_D)
             local_patch_ids = torch.gather(local_patch_ids, dim=1, index=order_3)
-            mask            = torch.gather(mask,            dim=1, index=order)
+            patch_mask      = torch.gather(patch_mask,            dim=1, index=order)
         
             # 4. add positional encoding
             r_idx, phi_idx, z_idx = local_patch_ids[..., 0], local_patch_ids[..., 1], local_patch_ids[..., 2]
@@ -293,17 +294,17 @@ class VQVAENormFormer(torch.nn.Module):
         
             # 5. encode → quantize → decode
             e       = self.input_projection(e)
-            e       = self.encoder_normformer(e, mask=mask)
-            z_embed = self.latent_projection_in(e) * mask.unsqueeze(-1)
+            e       = self.encoder_normformer(e, mask=patch_mask)
+            z_embed = self.latent_projection_in(e) * patch_mask.unsqueeze(-1)
     
             if self.vq_kwargs is not None:
                 z, vq_out = self.vqlayer(z_embed)
             else:
                 z, vq_out = z_embed, None
     
-            e_reco  = self.latent_projection_out(z) * mask.unsqueeze(-1)
-            e_reco  = self.decoder_normformer(e_reco, mask=mask)
-            e_reco  = self.output_projection(e_reco) * mask.unsqueeze(-1)
+            e_reco  = self.latent_projection_out(z) * patch_mask.unsqueeze(-1)
+            e_reco  = self.decoder_normformer(e_reco, mask=patch_mask)
+            e_reco  = self.output_projection(e_reco) * patch_mask.unsqueeze(-1)
         
             # 6. undo the sort so patches line up with their original key groupings
             # argsort of argsort gives the inverse permutation
@@ -313,15 +314,18 @@ class VQVAENormFormer(torch.nn.Module):
             # 7. split back by patch group and decode each with its own linear decoder
             x_reco_chunks = {}
             start = 0
-            for key, P_k in zip(sorted(batch.keys()), patch_group_sizes):
+            for key, P_k in zip(keys, patch_group_sizes):
                 chunk = e_reco_unordered[:, start:start + P_k, :]      # (B, P_k, D)
-                x_reco_chunks[key] = self.linear_projection_decoders[str(key)](chunk)  # (B, P_k, bins_k)
+                # transpose of the encoder
+                W = self.linear_projection_encoders[str(key)].weight  # (D, bins_k)
+                x_reco_chunks[key] = F.linear(chunk, W.T)  # (B, P_k, bins_k)
                 start += P_k
     
             return e, e_reco, {key:batch[key]["flat_tensor"] for key in batch.keys()}, x_reco_chunks, vq_out
 
         elif self.data_type == "hit":
 
+            
 
 
             """
@@ -329,9 +333,13 @@ class VQVAENormFormer(torch.nn.Module):
                 batch: TENSOR
             """
             # encode
+         #   print("x", torch.sum(torch.isnan(x)))
             x0 = self.input_projection(x) # BS, num hits, hidden_dim
+           # print("x0", torch.sum(torch.isnan(x0)))
             x1 = self.encoder_normformer(x0, mask=mask) # BS, num hits, hidden_dim
+           # print("x1", torch.sum(torch.isnan(x1)))
             z_embed = self.latent_projection_in(x1) * mask.unsqueeze(-1)  # BS, num hits, latent_dim
+           # print("z_embed", torch.sum(torch.isnan(z_embed)))
             
             # quantize
             if self.vq_kwargs is not None:
@@ -339,11 +347,16 @@ class VQVAENormFormer(torch.nn.Module):
             else:
                 z, vq_out = z_embed, None
 
+           # print("z", torch.sum(torch.isnan(z)))
+
             
             # decode
             x_reco0 = self.latent_projection_out(z) * mask.unsqueeze(-1) # BS, num hits, hidden_dim
+           # print("x_reco0", torch.sum(torch.isnan(x_reco0)))
             x_reco1 = self.decoder_normformer(x_reco0, mask=mask) # BS, num hits, hidden_dim
+           # print("x_reco1", torch.sum(torch.isnan(x_reco1)))
             x_reco = self.output_projection(x_reco1) * mask.unsqueeze(-1) # BS, num hits, input_dim
+          #  print("x_reco", torch.sum(torch.isnan(x_reco)))
 
           
             
@@ -471,25 +484,37 @@ class VQVAELightning(L.LightningModule):
             x_particle = batch["calo_hit_features"]
             mask_particle = batch["mask"]
             labels = batch["hit_labels"]   
+
             
             if beta != 0:
                 # augment data
+                #print("augment")
+                #print(torch.sum(torch.isnan(x_particle)), torch.sum(torch.isinf(x_particle)))
                 x_particle_augmented = augment_data(x_particle) # augmentation needs to be done before standardization  
-                x_particle_augmented = standardize_calo_hit_features_rphiz(x_particle_augmented)
+                #print(torch.sum(torch.isnan(x_particle)), torch.sum(torch.isinf(x_particle)))
+                x_particle_augmented = standardize_calo_hit_features_xyz(x_particle_augmented)
+                
               
                 _, _, z_embed_augmented = self.forward(None, x_particle_augmented, mask_particle)
               
             else:
                 ssl_loss = 0
 
-    
-            x_particle = standardize_calo_hit_features_rphiz(x_particle)
+            #print("main")
+            #print(torch.sum(torch.isnan(x_particle)), torch.sum(torch.isinf(x_particle)))
+            x_particle = standardize_calo_hit_features_xyz(x_particle)
+            #print(torch.sum(torch.isnan(x_particle)), torch.sum(torch.isinf(x_particle)))
+
+
             x_particle_reco, vq_out, z_embed = self.forward(None, x_particle, mask_particle) # batch not used
 
             diff = (x_particle_reco - x_particle) ** 2
             mask_expanded = mask_particle.unsqueeze(-1)
 
+            
+
             reco_loss = (diff * mask_expanded).sum() / mask_expanded.sum()
+            reco_loss = diff.mean()
             loss = reco_loss
 
             
@@ -528,9 +553,11 @@ class VQVAELightning(L.LightningModule):
             
             losses = []
             for key in patches_chunked.keys():
-                diff = (patches_chunked[key] - patches_chunked_reco[key]) ** 2
+
                 mask = batch[key]["mask"].unsqueeze(-1)
-                losses.append((diff * mask).sum() / mask.sum())
+                if mask.sum() > 0:
+                    diff = (patches_chunked[key] - patches_chunked_reco[key]) ** 2
+                    losses.append((diff * mask).sum() / mask.sum())
 
             reco_loss = torch.stack(losses).mean()
 
@@ -544,7 +571,6 @@ class VQVAELightning(L.LightningModule):
                 loss_dict["cmt_loss"] = cmt_loss
 
             loss_dict["total_loss"] = loss
-        
                 
     
             if return_x:

@@ -3,6 +3,11 @@ import torch
 import torch.nn as nn
 
 
+
+
+    
+
+
 class DetectorPosEnc(nn.Module):
     """
     Stable positional encoding for cylindrical detector with irregular phi segmentation.
@@ -14,33 +19,30 @@ class DetectorPosEnc(nn.Module):
       - optional smooth circular features (sin/cos of normalized phi)
     """
 
-    def __init__(self, phi_max_per_r: dict[int, int], n_z: int, d_latent: int):
+    def __init__(self, 
+                 n_rings: int,
+                 n_phi: int, 
+                 n_z: int, 
+                 d_latent: int
+                 ):
         super().__init__()
 
         assert d_latent % 2 == 0
 
-        self.d_latent = d_latent
-        self.n_r = max(phi_max_per_r) + 1
+        self.n_rings = n_rings
+        self.n_phi   = n_phi
         self.n_z = n_z
-
-        # store phi counts per ring
-        phi_counts = [phi_max_per_r[r] for r in range(self.n_r)]
-        self.register_buffer("phi_counts", torch.tensor(phi_counts, dtype=torch.long))
-
-        # max phi bins across detector (for embedding table sizing)
-        self.max_phi = max(phi_counts)
+        self.d_latent = d_latent
+        
 
         # -----------------------------
         # Learned embeddings
         # -----------------------------
-        self.r_emb = nn.Embedding(self.n_r, d_latent)
-        self.z_emb = nn.Embedding(n_z, d_latent)
-
-        # φ embedding (discrete)
-        self.phi_emb = nn.Embedding(self.max_phi, d_latent)
-
+        self.r_emb = nn.Embedding(self.n_rings, d_latent)
+        self.z_emb = nn.Embedding(self.n_z, d_latent)
+        self.phi_emb = nn.Embedding(self.n_phi, d_latent)
         # ring-specific modulation (important for irregular geometry)
-        self.r_phi_scale = nn.Embedding(self.n_r, d_latent)
+        self.r_phi_scale = nn.Embedding(self.n_rings, d_latent)
 
         # -----------------------------
         # Optional continuous circular features
@@ -59,23 +61,11 @@ class DetectorPosEnc(nn.Module):
         # -----------------------------
         # 1. safety: clamp indices
         # -----------------------------
-        r_idx = r_idx.long().clamp(0, self.n_r - 1)
-        z_idx = z_idx.long().clamp(0, self.n_z - 1)
+        # clamp all indices for safety
+        r_idx   = r_idx.long().clamp(0, self.n_rings - 1)
+        phi_idx = phi_idx.long().clamp(0, self.n_phi - 1)
+        z_idx   = z_idx.long().clamp(0, self.n_z - 1)
 
-        phi_max = self.phi_counts[r_idx]  # [...]
-
-        # prevent invalid phi indices
-        phi_idx = phi_idx.long()
-
-        phi_max = self.phi_counts[r_idx]
-        
-        phi_idx = torch.where(
-            phi_idx >= phi_max,
-            phi_max - 1,
-            phi_idx
-        )
-        
-        phi_idx = torch.clamp(phi_idx, min=0)
 
         # -----------------------------
         # 2. learned discrete phi embedding
@@ -90,14 +80,9 @@ class DetectorPosEnc(nn.Module):
         # 3. optional continuous circular encoding
         # -----------------------------
         if self.use_continuous:
-            # normalize within ring safely
-            denom = phi_max.clamp(min=1).float()
-            angle = (phi_idx.float() / denom) * (2.0 * math.pi)
-
-            circ = torch.stack([torch.sin(angle), torch.cos(angle)], dim=-1)
-            circ_emb = self.cont_proj(circ)
-
-            phi_emb = phi_emb + circ_emb
+            angle   = (phi_idx.float() / self.n_phi) * (2.0 * math.pi)
+            circ    = torch.stack([torch.sin(angle), torch.cos(angle)], dim=-1)
+            phi_emb = phi_emb + self.cont_proj(circ)
 
         # -----------------------------
         # 4. final sum
@@ -107,3 +92,5 @@ class DetectorPosEnc(nn.Module):
             + self.z_emb(z_idx)
             + phi_emb
         )
+
+
