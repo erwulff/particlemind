@@ -170,14 +170,15 @@ def main(args):
                 offsets[i] = int((detector_patching_params["barrel_configs"]["cells_per_wedge"][i] - detector_patching_params["barrel_configs"]["cells_per_wedge"][0]) / 2)
             
             detector_patching_params["barrel_configs"]["offsets"] = offsets                    
-            patch_registry, unique_patch_sizes_dict, NUM_TOTAL_PATCHES = build_patch_registry(detector_patching_params)
+            patch_registry, unique_patch_sizes, NUM_TOTAL_PATCHES = build_patch_registry(detector_patching_params)
+        
     
             vit_kwargs = configs_data["vit_kwargs"]
-            vit_kwargs["unique_patch_sizes_dict"] = unique_patch_sizes_dict
+            vit_kwargs["unique_patch_sizes_dict"] = unique_patch_sizes
             vit_kwargs["NUM_TOTAL_PATCHES"] = NUM_TOTAL_PATCHES
-    
+            vit_kwargs["n_phi_patches"] = patch_registry["n_phi_patches"]
+     
             # arguments for the positional encoding
-            vit_kwargs["n_phi_per_ring"] = patch_registry["n_phi_per_ring"]
             vit_kwargs["n_bins_z"] = detector_patching_params["barrel_configs"]["n_bins_z"]
             configs["model_kwargs"]["input_dim"] = configs_data["vit_kwargs"]["D_EMBEDDING"]
             

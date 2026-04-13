@@ -2,8 +2,8 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from src.data.augmentations import inverse_standardize_calo_hit_features_rphiz
-
+from src.data.augmentations import standardize_calo_hit_features_xyz
+ 
 
 def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2, n_scatterpoints_to_plot=200, masks=None, saveas=None):
     """Visualize the model.
@@ -48,8 +48,9 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
             master_z_q = master_z_q.detach().cpu().numpy()
             master_idx = master_idx.detach().cpu().numpy()
 
-    input_data = input_data.detach().cpu().numpy() # raw data doesn't need to be unstandardized
-    reco = inverse_standardize_calo_hit_features_rphiz(reco).detach().cpu().numpy()
+    input_data = standardize_calo_hit_features_xyz(input_data).detach().cpu().numpy()
+    #reco = inverse_standardize_calo_hit_features_rphiz(reco).detach().cpu().numpy()
+    reco = reco.detach().cpu().numpy()
 
 
     
@@ -61,8 +62,8 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
 
 
 
-    event_samples_E, event_samples_r, event_samples_phi, event_samples_z = [], [], [], []
-    reco_samples_E, reco_samples_r, reco_samples_phi, reco_samples_z = [], [], [], []
+    event_samples_E, event_samples_x, event_samples_y, event_samples_z = [], [], [], []
+    reco_samples_E, reco_samples_x, reco_samples_y, reco_samples_z = [], [], [], []
     labels_event = []
     z_e, z_q, idx = [], [], []
 
@@ -71,12 +72,12 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
         if masks is not None:
             mask = masks[event]
             event_samples_E.append(input_data[event, :, 3][mask == 1])
-            event_samples_r.append(input_data[event, :, 0][mask == 1])
-            event_samples_phi.append(input_data[event, :, 1][mask == 1])
+            event_samples_x.append(input_data[event, :, 0][mask == 1])
+            event_samples_y.append(input_data[event, :, 1][mask == 1])
             event_samples_z.append(input_data[event, :, 2][mask == 1])
             reco_samples_E.append(reco[event, :, 3][mask == 1])
-            reco_samples_r.append(reco[event, :, 0][mask == 1])
-            reco_samples_phi.append(reco[event, :, 1][mask == 1])
+            reco_samples_x.append(reco[event, :, 0][mask == 1])
+            reco_samples_y.append(reco[event, :, 1][mask == 1])
             reco_samples_z.append(reco[event, :, 2][mask == 1])
             labels_event.append(labels[event][mask == 1])
             if vq_out is not None:
@@ -86,12 +87,12 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
 
         else:
             event_samples_E.append(input_data[event, :, 3])
-            event_samples_r.append(input_data[event, :, 0])
-            event_samples_phi.append(input_data[event, :, 1])
+            event_samples_x.append(input_data[event, :, 0])
+            event_samples_y.append(input_data[event, :, 1])
             event_samples_z.append(input_data[event, :, 2])
             reco_samples_E.append(reco[event, :, 3])
-            reco_samples_r.append(reco[event, :, 0])
-            reco_samples_phi.append(reco[event, :, 1])
+            reco_samples_x.append(reco[event, :, 0])
+            reco_samples_y.append(reco[event, :, 1])
             reco_samples_z.append(reco[event, :, 2])
             labels_event.append(labels[event])
             if vq_out is not None:
@@ -296,37 +297,28 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
 
      # pull the first event for scatter plots
     mask = masks[0]
-    single_event_samples_r = input_data[0, :, 0][mask == 1]
-    single_event_samples_phi = input_data[0, :, 1][mask == 1]
+    single_event_samples_x = input_data[0, :, 0][mask == 1]
+    single_event_samples_y = input_data[0, :, 1][mask == 1]
     single_event_samples_z = input_data[0, :, 2][mask == 1]
-    single_reco_samples_r = reco[0, :, 0][mask == 1]
-    single_reco_samples_phi = reco[0, :, 1][mask == 1]
+    single_reco_samples_x = reco[0, :, 0][mask == 1]
+    single_reco_samples_y = reco[0, :, 1][mask == 1]
     single_reco_samples_z = reco[0, :, 2][mask == 1]
 
-    all_r = np.concatenate([single_event_samples_r, single_reco_samples_r])
-    all_phi = np.concatenate([single_event_samples_phi, single_reco_samples_phi])
-    all_z = np.concatenate([single_event_samples_z, single_reco_samples_z])
- 
-
-    bins_r = np.linspace(np.min(all_r), np.max(all_r), 100)
-    bins_phi = np.linspace(np.min(all_phi), np.max(all_phi), 100)
-    bins_z = np.linspace(np.min(all_z), np.max(all_z), 100)
-
-    single_event_samples_x = single_event_samples_r*np.cos(single_event_samples_phi)
-    single_event_samples_y = single_event_samples_r*np.sin(single_event_samples_phi)
-    single_reco_samples_x = single_reco_samples_r*np.cos(single_reco_samples_phi)
-    single_reco_samples_y = single_reco_samples_r*np.sin(single_reco_samples_phi)
-
+    
     all_x = np.concatenate([single_event_samples_x, single_reco_samples_x])
     all_y = np.concatenate([single_event_samples_y, single_reco_samples_y])
+    all_z = np.concatenate([single_event_samples_z, single_reco_samples_z])
 
     bins_x = np.linspace(np.min(all_x), np.max(all_x), 100)
     bins_y = np.linspace(np.min(all_y), np.max(all_y), 100)
+    bins_z = np.linspace(np.min(all_z), np.max(all_z), 100)
 
     fig, axarr = plt.subplots(1, 6, figsize=(7*6, 6))
 
     # data, x-y
     ax = axarr[0]
+    #print(single_event_samples_x)
+    #print(single_event_samples_y)
     h = ax.hist2d(single_event_samples_x, single_event_samples_y, bins=[bins_x, bins_y], norm="log", density=True)
     ax.set_xlabel("$x$")
     ax.set_ylabel("$y$")
@@ -346,26 +338,26 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
 
     # data, x-z
     ax = axarr[2]
-    h = ax.hist2d(single_event_samples_z, single_event_samples_phi, bins=[bins_z, bins_phi], norm="log", density=True)
-    ax.set_xlabel("$z$")
-    ax.set_ylabel("$\phi$")
+    h = ax.hist2d(single_event_samples_x, single_event_samples_z, bins=[bins_x, bins_z], norm="log", density=True)
+    ax.set_xlabel("$x$")
+    ax.set_ylabel("$z$")
     ax.set_title("Data")
     if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
         plt.colorbar(h[3], ax=ax)
 
     # reco, x-z
     ax = axarr[3]
-    h = ax.hist2d(single_reco_samples_z, single_reco_samples_phi, bins=[bins_z, bins_phi], norm="log", density=True)
-    ax.set_xlabel("$z$")
-    ax.set_ylabel("$phi$")
+    h = ax.hist2d(single_reco_samples_x, single_reco_samples_z, bins=[bins_x, bins_z], norm="log", density=True)
+    ax.set_xlabel("$x$")
+    ax.set_ylabel("$z$")
     ax.set_title("Reco")
     if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
         plt.colorbar(h[3], ax=ax)
 
     # data, y-z
     ax = axarr[4]
-    h = ax.hist2d(single_event_samples_r, single_event_samples_z, bins=[bins_r, bins_z], norm="log", density=True)
-    ax.set_xlabel("$r$")
+    h = ax.hist2d(single_event_samples_y, single_event_samples_z, bins=[bins_y, bins_z], norm="log", density=True)
+    ax.set_xlabel("$y$")
     ax.set_ylabel("$z$")
     ax.set_title("Data")
     if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
@@ -373,8 +365,8 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
 
     # reco, y-z
     ax = axarr[5]
-    h = ax.hist2d(single_reco_samples_r, single_reco_samples_z, bins=[bins_r, bins_z], norm="log", density=True)
-    ax.set_xlabel("$r$")
+    h = ax.hist2d(single_reco_samples_y, single_reco_samples_z, bins=[bins_y, bins_z], norm="log", density=True)
+    ax.set_xlabel("$y$")
     ax.set_ylabel("$z$")
     ax.set_title("Reco")
     if np.isfinite(h[0]).any() and np.nanmin(h[0]) < np.nanmax(h[0]):
