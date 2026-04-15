@@ -213,12 +213,14 @@ def main(args):
                 "train",
                 nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
                 train_fraction=configs_data["train_fraction"],
+                augment_dataset=configs["model_kwargs"]["beta"] > 0
             )
             val_dataset = CaloHitDataset(
                 configs_data["subset"],
                 "val",
                 nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
                 train_fraction=configs_data["train_fraction"],
+                 augment_dataset=configs["model_kwargs"]["beta"] > 0
             )
 
             collate_func = CollaterHits(empty_key="calo_hit_features", pad=configs_data["pad"])

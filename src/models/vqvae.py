@@ -487,34 +487,18 @@ class VQVAELightning(L.LightningModule):
 
             
             if beta != 0:
-                # augment data
-                #print("augment")
-                #print(torch.sum(torch.isnan(x_particle)), torch.sum(torch.isinf(x_particle)))
-                x_particle_augmented = augment_data(x_particle) # augmentation needs to be done before standardization  
-                #print(torch.sum(torch.isnan(x_particle)), torch.sum(torch.isinf(x_particle)))
-                x_particle_augmented = standardize_calo_hit_features_xyz(x_particle_augmented)
-                
-              
+                x_particle_augmented = batch["calo_hit_features_augmented"]
                 _, _, z_embed_augmented = self.forward(None, x_particle_augmented, mask_particle)
               
             else:
                 ssl_loss = 0
-
-            #print("main")
-            #print(torch.sum(torch.isnan(x_particle)), torch.sum(torch.isinf(x_particle)))
-            x_particle = standardize_calo_hit_features_xyz(x_particle)
-            #print(torch.sum(torch.isnan(x_particle)), torch.sum(torch.isinf(x_particle)))
 
 
             x_particle_reco, vq_out, z_embed = self.forward(None, x_particle, mask_particle) # batch not used
 
             diff = (x_particle_reco - x_particle) ** 2
             mask_expanded = mask_particle.unsqueeze(-1)
-
-            
-
             reco_loss = (diff * mask_expanded).sum() / mask_expanded.sum()
-            reco_loss = diff.mean()
             loss = reco_loss
 
             

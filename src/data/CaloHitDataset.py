@@ -6,6 +6,9 @@ import itertools
 import logging
 
 
+from src.data.augmentations import standardize_calo_hit_features_xyz, augment_data
+
+
 class CaloHitDataset(IterableDataset):
     def __init__(
         self,
@@ -16,12 +19,14 @@ class CaloHitDataset(IterableDataset):
         E_min=0.001,
         start_idx=None,
         stop_idx=None,
+        augment_dataset=False
     ):
         self.subset = subset
         self.split = split
         self.nsamples = nsamples
         self.train_fraction = train_fraction
         self.E_min = E_min
+        self.augment_dataset = augment_dataset
 
         # NEW
         self.start_idx = start_idx
@@ -138,7 +143,17 @@ class CaloHitDataset(IterableDataset):
             )
             hit_labels = np.array(event["detector"])[mask]
 
-            yield {
+            to_yield = {
                 "hit_labels": hit_labels,
-                "calo_hit_features": calo_hit_features,
+                "calo_hit_features": standardize_calo_hit_features_xyz(calo_hit_features),
             }
+
+
+            if self.augment_dataset: 
+                augmented_data = standardize_calo_hit_features_xyz(augment_data(calo_hit_features))
+
+            to_yield["calo_hit_features_augmented"] = augmented_data
+
+  
+
+            yield to_yield

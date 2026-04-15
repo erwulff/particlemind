@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from src.data.augmentations import standardize_calo_hit_features_xyz
  
 
 def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2, n_scatterpoints_to_plot=200, masks=None, saveas=None):
@@ -48,9 +47,8 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
             master_z_q = master_z_q.detach().cpu().numpy()
             master_idx = master_idx.detach().cpu().numpy()
 
-    input_data = standardize_calo_hit_features_xyz(input_data).detach().cpu().numpy()
-    #reco = inverse_standardize_calo_hit_features_rphiz(reco).detach().cpu().numpy()
-    reco = reco.detach().cpu().numpy()
+    input_data = input_data.detach().cpu().numpy()
+    reco = reco.detach().cpu().numpy() # standardized in the model step
 
 
     
