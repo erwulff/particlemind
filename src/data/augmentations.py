@@ -24,8 +24,8 @@ def inverse_standardize_calo_hit_features_xyz(calo_hit_features):
     calo_hit_features[..., 3] = np.exp(calo_hit_features[..., 3] * 10) / 1e2
     return calo_hit_features
 
-def add_random_noise(x, std=1e-2):
-    noise = np.random.normal(size =x.shape) * std
+def add_random_noise(x, frac=0.05):
+    noise = np.random.normal(size=x.shape) * (np.abs(x) * frac)
     noise[..., 3] = np.abs(noise[..., 3])
     return x + noise
 
@@ -60,7 +60,7 @@ def augment_data(x):
     x = np.copy(x)  # 🔴 critical: global safety clone
 
     # 1. random noise
-    x = add_random_noise(x, std=1e-2)
+    x = add_random_noise(x)
 
     ## 2. global phi rotation
     x = global_phi_rotation(x)
