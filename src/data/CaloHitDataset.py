@@ -152,7 +152,7 @@ class CaloHitDataset(IterableDataset):
             if self.augment_dataset: 
                 augmented_data = standardize_calo_hit_features_xyz(augment_data(calo_hit_features))
 
-            to_yield["calo_hit_features_augmented"] = augmented_data
+                to_yield["calo_hit_features_augmented"] = augmented_data
 
   
 
