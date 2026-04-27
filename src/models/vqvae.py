@@ -501,9 +501,14 @@ class VQVAELightning(L.LightningModule):
             reco_loss = (diff * mask_expanded).sum() / mask_expanded.sum()
             loss = reco_loss
 
-            
             loss_dict = {"reco_loss": reco_loss}
 
+            # calculate cosine similarity between x_particle and x_particle_reco
+            x1 = F.normalize(x_particle, dim=-1)       # [2, 7491, 4]
+            x2 = F.normalize(x_particle_reco, dim=-1)  # [2, 7491, 4]
+
+            cos_sim = (x1 * x2).sum(dim=-1).mean()  # [2, 7491]
+            loss_dict["cosine_similarity"] = cos_sim
 
             if beta != 0:
                 ssl_loss = self.contrastive_loss(z_embed, z_embed_augmented, mask_particle)
