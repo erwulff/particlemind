@@ -30,13 +30,12 @@ def add_random_noise(x, frac=0.05):
     return x + noise
 
 
-def global_phi_rotation(x):
+def global_phi_rotation(x, max_angle=2.0*np.pi):
     """
     Assumes feature order: (x, y, z, E) or similar,
     """
 
-
-    phi_angle = np.random.random(1) * 2.0 * np.pi
+    phi_angle = np.random.random(1) * max_angle
     phi_angle = np.pi
 
     # apply rotation
@@ -51,6 +50,39 @@ def global_phi_rotation(x):
 
     return x
 
+
+def collinear_split(x, frac=0.01):
+    """
+    Randomly split frac of the hits into two collinear hits with a random amount of energy
+    """
+    x = np.copy(x)
+
+    num_hits = x.shape[0]
+    num_split = int(num_hits * frac)
+
+    if num_split == 0:
+        return x
+
+    split_indices = np.random.choice(num_hits, size=num_split, replace=False)
+
+    new_hits = []
+    for idx in split_indices:
+        hit = x[idx]
+        energy = hit[3]
+        if energy <= 0:
+            continue
+        split_energy = energy * np.random.uniform(0.1, 0.9)
+        hit[3] -= split_energy
+        new_hit = np.copy(hit)
+        new_hit[3] = split_energy
+        new_hits.append(new_hit)
+
+    if new_hits:
+        x = np.concatenate([x, np.array(new_hits)], axis=0)
+
+    return x
+
+
   
 def augment_data(x):
     """
@@ -63,6 +95,9 @@ def augment_data(x):
     x = add_random_noise(x)
 
     ## 2. global phi rotation
-    x = global_phi_rotation(x)
+    x = global_phi_rotation(x, max_angle = 0.5*np.pi)
+
+    ## 3. collinear split
+    x = collinear_split(x)
 
     return x
