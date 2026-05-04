@@ -187,7 +187,7 @@ def main(args):
     
             # DATA
             train_dataset = CaloPatchDataset(
-                configs_data["subset"],
+                configs_data["subsets"],
                 "train",
                 patch_registry,
                 detector_patching_params,
@@ -195,7 +195,7 @@ def main(args):
                 train_fraction=configs_data["train_fraction"],
             )
             val_dataset = CaloPatchDataset(
-                configs_data["subset"],
+                configs_data["subsets"],
                 "val",
                 patch_registry,
                 detector_patching_params,
@@ -209,14 +209,14 @@ def main(args):
 
             # DATA
             train_dataset = CaloHitDataset(
-                configs_data["subset"],
+                configs_data["subsets"],
                 "train",
                 nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
                 train_fraction=configs_data["train_fraction"],
                 augment_dataset=configs["model_kwargs"]["beta"] > 0
             )
             val_dataset = CaloHitDataset(
-                configs_data["subset"],
+                configs_data["subsets"],
                 "val",
                 nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
                 train_fraction=configs_data["train_fraction"],

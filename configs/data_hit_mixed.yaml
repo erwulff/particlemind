@@ -1,14 +1,13 @@
 # training
 
-subset: "ttbar_pu0_calo_hits"
+subsets: ["ttbar_pu0_calo_hits", "ggf_pu0_calo_hits", "zprime_pu0_calo_hits"]
 train_fraction: 0.9
 batch_size_per_gpu: 2
 pad: 10000
-n_samples_total: 44444
-num_workers: 2
+n_samples_total: 11111
+num_workers: 1
 
 data_type: "hit"
-
 
 
 # tokens

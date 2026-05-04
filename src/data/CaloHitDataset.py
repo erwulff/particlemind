@@ -12,16 +12,16 @@ from src.data.augmentations import standardize_calo_hit_features_xyz, augment_da
 class CaloHitDataset(IterableDataset):
     def __init__(
         self,
-        subset,
+        subsets,
         split,
         nsamples=None,
         train_fraction=0.8,
-        E_min=0.001,
+        E_min=0.00075,
         start_idx=None,
         stop_idx=None,
         augment_dataset=False
     ):
-        self.subset = subset
+        self.subsets = subsets
         self.split = split
         self.nsamples = nsamples
         self.train_fraction = train_fraction
@@ -32,15 +32,26 @@ class CaloHitDataset(IterableDataset):
         self.start_idx = start_idx
         self.stop_idx = stop_idx
 
-
     def _get_stream(self):
-        return load_dataset(
-            "CERN/ColliderML-Release-1",
-            self.subset,
-            split="train",
-            streaming=True,
-            columns=["event_id", "detector", "total_energy", "x", "y", "z"],
-        )
+        def stream_with_subset(subset_name, subset_id):
+            dataset = load_dataset(
+                "CERN/ColliderML-Release-1",
+                subset_name,
+                split="train",
+                streaming=True,
+                columns=["event_id", "detector", "total_energy", "x", "y", "z"],
+            )
+            for event in dataset:
+                event["subset"] = subset_name      # human-readable
+                #event["subset_id"] = subset_id     # numeric (better for models)
+                yield event
+
+        streams = [
+            stream_with_subset(subset, i)
+            for i, subset in enumerate(self.subsets)
+        ]
+
+        return itertools.chain.from_iterable(zip(*streams))
 
     def __len__(self):
         # nsamples overrides everything
@@ -99,7 +110,7 @@ class CaloHitDataset(IterableDataset):
             # ----------------------------
             # deterministic train/val split
             # ----------------------------
-            idx_in_split = i % 100
+            idx_in_split = hash((event["event_id"], tuple(self.subsets))) % 100
             is_train_event = idx_in_split < int(100 * self.train_fraction)
 
             if self.split == "train" and not is_train_event:
@@ -121,6 +132,7 @@ class CaloHitDataset(IterableDataset):
             if self.nsamples is not None and sample_counter >= self.nsamples:
                 return
             sample_counter += 1
+
 
             # ----------------------------
             # build features

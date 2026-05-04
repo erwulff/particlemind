@@ -23,7 +23,6 @@ from tqdm import tqdm
 
 from src.models.optimizers import configure_optimizers_base
 from src.models.positional_encoding import DetectorPosEnc
-from src.data.augmentations import inverse_standardize_calo_hit_features_xyz, standardize_calo_hit_features_xyz, augment_data
 from src.models.plotting import plot_model_hit, plot_model_patch
 
 # vqtorch can be installed from https://github.com/minyoungg/vqtorch
@@ -440,7 +439,7 @@ class VQVAELightning(L.LightningModule):
 
 
 
-    def contrastive_loss(self, z1, z2, mask, temperature=0.1, alpha=1):
+    def contrastive_loss(self, z1, z2, mask1, mask2, temperature=0.1, alpha=1):
 
 
         def pool(z, mask):
@@ -449,8 +448,8 @@ class VQVAELightning(L.LightningModule):
             mask = mask.unsqueeze(-1)
             return (z * mask).sum(dim=1) / mask.sum(dim=1)
 
-        z1 = pool(z1, mask)
-        z2 = pool(z2, mask)
+        z1 = pool(z1, mask1)
+        z2 = pool(z2, mask2)
         # inputs have shape (B, latent_dim)
 
         # SimCLR loss
@@ -485,13 +484,17 @@ class VQVAELightning(L.LightningModule):
             mask_particle = batch["mask"]
             labels = batch["hit_labels"]   
 
-            
             if beta != 0:
                 x_particle_augmented = batch["calo_hit_features_augmented"]
-                _, _, z_embed_augmented = self.forward(None, x_particle_augmented, mask_particle)
+                # define mask on-the-fly because of collinear split augmentation
+                axis_sum = torch.sum(torch.abs(x_particle_augmented), dim=2)
+                mask_particle_augmented = torch.where(axis_sum > 0, 1.0, 0.0)
+                _, _, z_embed_augmented = self.forward(None, x_particle_augmented, mask_particle_augmented)
               
             else:
                 ssl_loss = 0
+
+            
 
 
             x_particle_reco, vq_out, z_embed = self.forward(None, x_particle, mask_particle) # batch not used
@@ -511,7 +514,7 @@ class VQVAELightning(L.LightningModule):
             loss_dict["cosine_similarity"] = cos_sim
 
             if beta != 0:
-                ssl_loss = self.contrastive_loss(z_embed, z_embed_augmented, mask_particle)
+                ssl_loss = self.contrastive_loss(z_embed, z_embed_augmented, mask_particle, mask_particle_augmented)
                 loss += beta * ssl_loss
                 loss_dict["ssl_loss"] = ssl_loss
                 
