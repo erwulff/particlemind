@@ -91,14 +91,20 @@ class CollaterHits:
         if self.variable_size_keys == "all":
             for key in inputs[0].keys():
 
-                if self.pad > 0:
-                    ret[key] = torch.nn.utils.rnn.pad_sequence(
-                        [torch.tensor(inp[key][:self.pad]).to(torch.float32) for inp in inputs], batch_first=True
-                    )
+                if key != "subset":
+
+                    if self.pad > 0:
+                        ret[key] = torch.nn.utils.rnn.pad_sequence(
+                            [torch.tensor(inp[key][:self.pad]).to(torch.float32) for inp in inputs], batch_first=True
+                        )
+                    else: 
+                        ret[key] = torch.nn.utils.rnn.pad_sequence(
+                            [torch.tensor(inp[key]).to(torch.float32) for inp in inputs], batch_first=True
+                        )
+
                 else: 
-                    ret[key] = torch.nn.utils.rnn.pad_sequence(
-                        [torch.tensor(inp[key]).to(torch.float32) for inp in inputs], batch_first=True
-                    )
+
+                    ret[key] = [inp[key] for inp in inputs]
 
             # get mask
             axis_sum = torch.sum(torch.abs(ret[self.empty_key]), dim=2)
