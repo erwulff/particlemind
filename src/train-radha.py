@@ -11,7 +11,6 @@ from pathlib import Path
 # Force Hugging Face datasets cache to local scratch (avoid NFS filelock hangs)
 os.environ["HF_DATASETS_CACHE"] = f"/tmp/{os.environ['USER']}/hf_datasets_cache"
 os.environ["HF_HOME"] = f"/tmp/{os.environ['USER']}/hf_home"
-
 # Disable file locks entirely for streaming datasets
 from datasets import config
 config.HF_ALLOW_TRUSTED_CODE = True
@@ -26,7 +25,7 @@ from lightning import Trainer, seed_everything
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
-from src.data.CaloHitDataset import CaloHitDataset
+from src.data.CaloHitDatasetCAL import CaloHitDataset
 from src.data.CaloPatchDataset import CaloPatchDataset
 
 from src.data.Tokens import Tokens, TokensSingleFile
@@ -36,7 +35,7 @@ from src.data.utils import CollaterPatch, CollaterHits
 from src.models.backbone import BackboneNextTokenPredictionLightning
 
 # from src.models.vae import VAELightning, SSLLightning
-from src.models.vqvae import VQVAELightning
+from src.models.vqvae_double import VQVAELightning
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
@@ -213,14 +212,16 @@ def main(args):
                 "train",
                 nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
                 train_fraction=configs_data["train_fraction"],
-                augment_dataset=configs["model_kwargs"]["beta"] > 0
+                augment_dataset=configs["model_kwargs"]["beta"] > 0,
+                E_min=configs_data["E_min"]
             )
             val_dataset = CaloHitDataset(
                 configs_data["subsets"],
                 "val",
                 nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
                 train_fraction=configs_data["train_fraction"],
-                 augment_dataset=configs["model_kwargs"]["beta"] > 0
+                 augment_dataset=configs["model_kwargs"]["beta"] > 0,
+                E_min=configs_data["E_min"]
             )
 
             collate_func = CollaterHits(empty_key="calo_hit_features", pad=configs_data["pad"])

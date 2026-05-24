@@ -127,3 +127,56 @@ class CollaterHits:
         return ret
 
         """
+
+
+
+class CollaterHits:
+    """
+    Custom collator for DataLoader to handle variable-sized inputs.
+    This collator pads variable-sized inputs and stacks fixed-size inputs.
+    It is designed to work with datasets where some features (like particle hits) can vary in size,
+    while others (like event-level features) are fixed-size.
+    Args:
+        variable_size_keys (list): List of keys for variable-sized inputs that need padding.
+        fixed_size_keys (list): List of keys for fixed-sized inputs that can be stacked.
+    Returns:
+        dict: A dictionary containing padded and stacked inputs.
+    """
+
+    def __init__(self, empty_key, variable_size_keys="all", fixed_size_keys=None, pad=-1, **kwargs):
+        super(CollaterHits, self).__init__(**kwargs)
+        self.variable_size_keys = variable_size_keys
+        self.fixed_size_keys = fixed_size_keys
+        self.empty_key = empty_key
+        self.pad = pad
+
+    def __call__(self, inputs):
+        ret = {}
+
+        if self.variable_size_keys == "all":
+            for key in inputs[0].keys():
+
+                if key != "subset":
+
+                    if self.pad > 0:
+                        ret[key] = torch.nn.utils.rnn.pad_sequence(
+                            [torch.tensor(inp[key][:self.pad]).to(torch.float32) for inp in inputs], batch_first=True
+                        )
+                    else: 
+                        ret[key] = torch.nn.utils.rnn.pad_sequence(
+                            [torch.tensor(inp[key]).to(torch.float32) for inp in inputs], batch_first=True
+                        )
+
+                else: 
+
+                    ret[key] = [inp[key] for inp in inputs]
+
+            # get mask
+            axis_sum = torch.sum(torch.abs(ret["calo_hit_features_ECAL"]), dim=2)
+            ret["mask_ECAL"] = torch.where(axis_sum > 0, 1.0, 0.0)
+            axis_sum = torch.sum(torch.abs(ret["calo_hit_features_HCAL"]), dim=2)
+            ret["mask_HCAL"] = torch.where(axis_sum > 0, 1.0, 0.0)
+    
+
+            return ret
+

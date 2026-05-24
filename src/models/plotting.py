@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
  
 
-def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2, n_scatterpoints_to_plot=200, masks=None, saveas=None):
+def plot_model_hit(input_data, reco, labels, device="cuda", n_events_to_plot=2, n_scatterpoints_to_plot=200, masks=None, saveas=None):
     """Visualize the model.
 
     Parameters
@@ -19,33 +19,34 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
         Number of examples to plot. The default is 200.
     """
 
+    vq_out = None
     # make empty axes invisible
     def is_axes_empty(ax):
         return not (ax.lines or ax.patches or ax.collections or ax.images or ax.texts or ax.artists or ax.tables)
 
 
-    input_data = input_data.to(device)
-    model = model.to(device)
+    # input_data = input_data.to(device)
+    # model = model.to(device)
    
 
-    # run the model on the input data
-    with torch.no_grad():
-        # print(f"Model device: {next(model.parameters()).device}")
-        # print(f"Samples device: {samples.device}")
-        reco, vq_out, _ = model(None, input_data, masks)
+    # # run the model on the input data
+    # with torch.no_grad():
+    #     # print(f"Model device: {next(model.parameters()).device}")
+    #     # print(f"Samples device: {samples.device}")
+    #     reco, vq_out, _ = model(None, input_data, masks)
        
 
         
 
-        if vq_out is not None:
+    #     if vq_out is not None:
         
-            master_z_q = vq_out["z_q"]
-            master_z_e = vq_out["z"]
-            master_idx = vq_out["q"]
+    #         master_z_q = vq_out["z_q"]
+    #         master_z_e = vq_out["z"]
+    #         master_idx = vq_out["q"]
        
-            master_z_e = master_z_e.detach().cpu().numpy()
-            master_z_q = master_z_q.detach().cpu().numpy()
-            master_idx = master_idx.detach().cpu().numpy()
+    #         master_z_e = master_z_e.detach().cpu().numpy()
+    #         master_z_q = master_z_q.detach().cpu().numpy()
+    #         master_idx = master_idx.detach().cpu().numpy()
 
     input_data = input_data.detach().cpu().numpy()
     reco = reco.detach().cpu().numpy() # standardized in the model step
@@ -64,6 +65,7 @@ def plot_model_hit(model, input_data, labels, device="cuda", n_events_to_plot=2,
     reco_samples_E, reco_samples_x, reco_samples_y, reco_samples_z = [], [], [], []
     labels_event = []
     z_e, z_q, idx = [], [], []
+
 
     for event in range(n_events_to_plot):
 

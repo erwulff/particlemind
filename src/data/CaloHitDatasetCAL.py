@@ -154,10 +154,19 @@ class CaloHitDataset(IterableDataset):
                 (x[mask], y[mask], z[mask], energy[mask])
             )
 
+            calo_hit_labels =  np.array(event["detector"])[mask]
+
+            is_ECAL = np.isin(calo_hit_labels, [9, 10, 11])
+            is_HCAL = np.isin(calo_hit_labels, [12, 13, 14])
+
+            calo_hit_features_std = standardize_calo_hit_features_xyz(calo_hit_features)
+
 
             to_yield = {
-                "hit_labels": np.array(event["detector"])[mask],
-                "calo_hit_features": standardize_calo_hit_features_xyz(calo_hit_features),
+                "labels_ECAL":calo_hit_labels[is_ECAL],
+                "labels_HCAL":calo_hit_labels[is_HCAL],
+                "calo_hit_features_HCAL": calo_hit_features_std[is_HCAL],
+                "calo_hit_features_ECAL": calo_hit_features_std[is_ECAL],
                 "subset": event["subset"]
             }
 

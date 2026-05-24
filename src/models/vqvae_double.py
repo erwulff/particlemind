@@ -374,7 +374,6 @@ class VQVAELightning(L.LightningModule):
         lr_scheduler_kwargs = {"use_scheduler":False},
         model_kwargs={},
         vit_kwargs=None,
-        model_type="Transformer",
         num_train_events=0,
         batch_size_per_gpu=0,
         plot_dir_name="",
@@ -385,15 +384,8 @@ class VQVAELightning(L.LightningModule):
 
         
 
-
-        if model_type == "MLP":
-            self.model = VQVAEMLP(**model_kwargs)
-        elif model_type == "Transformer":
-            self.model = VQVAETransformer(**model_kwargs)
-        elif model_type == "VQVAENormFormer":
-            self.model = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
+        self.model_HCAL = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
+        self.model_ECAL = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
 
         self.train_loss_history = []
         self.val_loss_list = []
@@ -428,16 +420,16 @@ class VQVAELightning(L.LightningModule):
 
 
 
-    def forward(self, batch, x, mask):
+    # def forward(self, batch, x, mask):
 
-        if self.data_type == "patch":
+    #     if self.data_type == "patch":
 
-            embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.model(batch, None, None)
-            return embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out
+    #         embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.model(batch, None, None)
+    #         return embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out
 
-        elif self.data_type == "hit":
-            x_reco, vq_out, z_embed = self.model(None, x, mask)
-            return x_reco, vq_out, z_embed 
+    #     elif self.data_type == "hit":
+    #         x_reco, vq_out, z_embed = self.model(None, x, mask)
+    #         return x_reco, vq_out, z_embed 
 
 
 
@@ -451,41 +443,62 @@ class VQVAELightning(L.LightningModule):
     
         if self.data_type == "hit":
     
-            x_particle = batch["calo_hit_features"]
-            mask_particle = batch["mask"]
-            labels = batch["hit_labels"]   
+            x_hit_ECAL = batch["calo_hit_features_ECAL"]
+            mask_ECAL = batch["mask_ECAL"]
+            x_hit_HCAL = batch["calo_hit_features_HCAL"]
+            mask_HCAL = batch["mask_HCAL"]
+            
+            
+
+            loss = 0
 
             if beta != 0:
-                x_particle_augmented = batch["calo_hit_features_augmented"]
-                # define mask on-the-fly because of collinear split augmentation
-                axis_sum = torch.sum(torch.abs(x_particle_augmented), dim=2)
-                mask_particle_augmented = torch.where(axis_sum > 0, 1.0, 0.0)
-                _, _, z_embed_augmented = self.forward(None, x_particle_augmented, mask_particle_augmented)
+                pass
+                # x_hit_augmented = batch["calo_hit_features_augmented"]
+                # # define mask on-the-fly because of collinear split augmentation
+                # axis_sum = torch.sum(torch.abs(x_hit_augmented), dim=2)
+                # mask_particle_augmented = torch.where(axis_sum > 0, 1.0, 0.0)
+                # _, _, z_embed_augmented = self.forward(None, x_hit_augmented, mask_particle_augmented)
               
             else:
                 ssl_loss = 0
 
-            
 
+            x_hit_ECAL_reco, vq_out, z_embed_ECAL = self.model_ECAL(None, x_hit_ECAL, mask_ECAL) # batch not used
+            x_hit_HCAL_reco, vq_out, z_embed_HCAL = self.model_HCAL(None, x_hit_HCAL, mask_HCAL) # batch not used
 
-            x_particle_reco, vq_out, z_embed = self.forward(None, x_particle, mask_particle) # batch not used
+            diff_ECAL = (x_hit_ECAL_reco - x_hit_ECAL) ** 2
+            mask_ECAL_expanded = mask_ECAL.unsqueeze(-1)
+            reco_loss_ECAL = (diff_ECAL * mask_ECAL_expanded).sum() / mask_ECAL_expanded.sum()
+            loss += reco_loss_ECAL
+            x1 = F.normalize(x_hit_ECAL, dim=-1)       # [2, # hits, 4]
+            x2 = F.normalize(x_hit_ECAL_reco, dim=-1)  # [2, # hits, 4]
+            cos_sim_ECAL = (
+                ((x1 * x2).sum(dim=-1) * mask_ECAL).sum()
+                / mask_ECAL.sum().clamp(min=1)
+            )
 
-            diff = (x_particle_reco - x_particle) ** 2
-            mask_expanded = mask_particle.unsqueeze(-1)
-            reco_loss = (diff * mask_expanded).sum() / mask_expanded.sum()
-            loss = reco_loss
+            diff_HCAL = (x_hit_HCAL_reco - x_hit_HCAL) ** 2
+            mask_HCAL_expanded = mask_HCAL.unsqueeze(-1)
+            reco_loss_HCAL = (diff_HCAL * mask_HCAL_expanded).sum() / mask_HCAL_expanded.sum()
+            loss += reco_loss_HCAL
+            x1 = F.normalize(x_hit_HCAL, dim=-1)       # [2, # hits, 4]
+            x2 = F.normalize(x_hit_HCAL_reco, dim=-1)  # [2, # hits, 4]
+            cos_sim_HCAL = (
+                ((x1 * x2).sum(dim=-1) * mask_HCAL).sum()
+                / mask_HCAL.sum().clamp(min=1)
+            )
 
-            loss_dict = {"reco_loss": reco_loss}
+            loss_dict = {
+                "reco_loss_ECAL": reco_loss_ECAL,
+                "reco_loss_HCAL": reco_loss_HCAL,
+                "cosine_similarity_ECAL": cos_sim_ECAL,
+                "cosine_similarity_HCAL": cos_sim_HCAL,
+            }
 
-            # calculate cosine similarity between x_particle and x_particle_reco
-            x1 = F.normalize(x_particle, dim=-1)       # [2, 7491, 4]
-            x2 = F.normalize(x_particle_reco, dim=-1)  # [2, 7491, 4]
-
-            cos_sim = (x1 * x2).sum(dim=-1).mean()  # [2, 7491]
-            loss_dict["cosine_similarity"] = cos_sim
-
+  
             if beta != 0:
-                ssl_loss = self.contrastive_loss(z_embed, z_embed_augmented, mask_particle, mask_particle_augmented)
+                ssl_loss = CLIP_loss(z_embed_ECAL, z_embed_HCAL, mask_ECAL, mask_HCAL)
                 loss += beta * ssl_loss
                 loss_dict["ssl_loss"] = ssl_loss
                 
@@ -498,14 +511,33 @@ class VQVAELightning(L.LightningModule):
                 loss_dict["cmt_loss"] = cmt_loss
             else:
                 code_idx = None
-                
-            
 
+
+            x_hit = torch.cat([
+                x_hit_ECAL,
+                x_hit_HCAL
+            ], dim=1)
+            
+            x_hit_reco = torch.cat([
+                x_hit_ECAL_reco,
+                x_hit_HCAL_reco
+            ], dim=1)
+            
+            mask_particle = torch.cat([
+                mask_ECAL,
+                mask_HCAL
+            ], dim=1)
+            
+            labels = torch.cat([
+                batch["labels_ECAL"],
+                batch["labels_HCAL"]
+            ], dim=1)
+            
 
             loss_dict["total_loss"] = loss
 
             if return_x:
-                return loss_dict, x_particle, x_particle_reco, mask_particle, labels, code_idx
+                return loss_dict, x_hit, x_hit_reco, mask_particle, labels, code_idx
     
             return loss_dict
     
@@ -623,10 +655,10 @@ class VQVAELightning(L.LightningModule):
                 )
             elif self.data_type == "hit":
                  plot_model_hit(
-                     model=self.model, 
-                     input_data=batch["calo_hit_features"], 
-                     labels=batch["hit_labels"], 
-                     masks=batch["mask"],
+                     input_data=x_original, 
+                     reco=x_reco,
+                     labels=labels, 
+                     masks=mask,
                      device=self.device,
                      saveas=plot_filename
                  )
@@ -694,7 +726,7 @@ class VQVAELightning(L.LightningModule):
                 # move to device
                 features_batch = x_batch["calo_hit_features"].to(self.device)
                 mask_batch = x_batch["mask"].to(self.device)
-                x_particle_reco, vq_out = self.forward(features_batch, mask_batch)
+                x_hit_reco, vq_out = self.forward(features_batch, mask_batch)
                 code = vq_out["q"]
 
                 code = code.squeeze(-1).detach().cpu().numpy()
