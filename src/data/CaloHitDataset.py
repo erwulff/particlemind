@@ -140,11 +140,7 @@ class CaloHitDataset(IterableDataset):
             x = np.array(event["x"], dtype=np.float32)
             y = np.array(event["y"], dtype=np.float32)
             z = np.array(event["z"], dtype=np.float32)
-
-         
             energy = np.array(event["total_energy"], dtype=np.float32)
-
-
 
             mask = energy >= self.E_min
             if mask.sum() == 0:
@@ -153,18 +149,50 @@ class CaloHitDataset(IterableDataset):
             calo_hit_features = np.column_stack(
                 (x[mask], y[mask], z[mask], energy[mask])
             )
+            calo_hit_labels =  np.array(event["detector"])[mask]
 
 
-            to_yield = {
-                "hit_labels": np.array(event["detector"])[mask],
-                "calo_hit_features": standardize_calo_hit_features_xyz(calo_hit_features),
-                "subset": event["subset"]
-            }
 
+
+            calo_hit_features_std = standardize_calo_hit_features_xyz(calo_hit_features)
 
             if self.augment_dataset: 
-                augmented_data = standardize_calo_hit_features_xyz(augment_data(calo_hit_features))
-                to_yield["calo_hit_features_augmented"] = augmented_data
+                calo_hit_features_aug, calo_hit_labels_aug = augment_data(
+                                        calo_hit_features, calo_hit_labels
+                                    )
+
+                calo_hit_features_aug_std = standardize_calo_hit_features_xyz(calo_hit_features_aug)
+
+
+                
+
+                to_yield = {
+                    # original event
+                    "labels": calo_hit_labels,
+
+                    "calo_hit_features": calo_hit_features_std,
+
+                    
+                    # augmented event
+                    "labels_augmented": calo_hit_labels_aug,
+
+                    "calo_hit_features_augmented": calo_hit_features_aug_std,
+
+                    
+                    "subset": event["subset"],
+                }
+
+                
+
+            else:
+                to_yield = {
+                    "labels":calo_hit_labels,
+
+                    "calo_hit_features": calo_hit_features_std,
+
+                    "subset": event["subset"]
+                }
+                
 
   
 

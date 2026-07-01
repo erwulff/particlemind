@@ -172,11 +172,26 @@ class CollaterHits:
                     ret[key] = [inp[key] for inp in inputs]
 
             # get mask
-            axis_sum = torch.sum(torch.abs(ret["calo_hit_features_ECAL"]), dim=2)
-            ret["mask_ECAL"] = torch.where(axis_sum > 0, 1.0, 0.0)
-            axis_sum = torch.sum(torch.abs(ret["calo_hit_features_HCAL"]), dim=2)
-            ret["mask_HCAL"] = torch.where(axis_sum > 0, 1.0, 0.0)
+            if "calo_hit_features_ECAL" in ret.keys():
+                axis_sum = torch.sum(torch.abs(ret["calo_hit_features_ECAL"]), dim=2)
+                ret["mask_ECAL"] = torch.where(axis_sum > 0, 1.0, 0.0)
+                axis_sum = torch.sum(torch.abs(ret["calo_hit_features_HCAL"]), dim=2)
+                ret["mask_HCAL"] = torch.where(axis_sum > 0, 1.0, 0.0)
     
+                if "calo_hit_features_ECAL_augmented" in ret.keys():
+                    axis_sum = torch.sum(torch.abs(ret["calo_hit_features_ECAL_augmented"]), dim=2)
+                    ret["mask_ECAL_augmented"] = torch.where(axis_sum > 0, 1.0, 0.0)
+                    axis_sum = torch.sum(torch.abs(ret["calo_hit_features_HCAL_augmented"]), dim=2)
+                    ret["mask_HCAL_augmented"] = torch.where(axis_sum > 0, 1.0, 0.0)
+
+            else:
+                axis_sum = torch.sum(torch.abs(ret["calo_hit_features"]), dim=2)
+                ret["mask"] = torch.where(axis_sum > 0, 1.0, 0.0)
+    
+                if "calo_hit_features_augmented" in ret.keys():
+                    axis_sum = torch.sum(torch.abs(ret["calo_hit_features_augmented"]), dim=2)
+                    ret["mask_augmented"] = torch.where(axis_sum > 0, 1.0, 0.0)
+                 
 
             return ret
 

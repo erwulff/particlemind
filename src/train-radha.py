@@ -25,7 +25,8 @@ from lightning import Trainer, seed_everything
 from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
-from src.data.CaloHitDatasetCAL import CaloHitDataset
+#from src.data.CaloHitDatasetCAL import CaloHitDataset
+from src.data.CaloHitDataset import CaloHitDataset
 from src.data.CaloPatchDataset import CaloPatchDataset
 
 from src.data.Tokens import Tokens, TokensSingleFile
@@ -34,8 +35,8 @@ from src.data.patching import build_patch_registry
 from src.data.utils import CollaterPatch, CollaterHits
 from src.models.backbone import BackboneNextTokenPredictionLightning
 
-# from src.models.vae import VAELightning, SSLLightning
-from src.models.vqvae_double import VQVAELightning
+from src.models.vqvae import VQVAELightningSingle as VQVAELightning
+#from src.models.vqvae_double import VQVAELightning
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
@@ -145,6 +146,7 @@ def main(args):
             callbacks=callbacks,
             precision=configs["trainer_kwargs"]["precision"],
             default_root_dir=f"{args.save_dir}/{project}/",
+            gradient_clip_val=1.0,
             #limit_train_batches=configs["trainer_kwargs"]["limit_train_batches"],
             #limit_val_batches=configs["trainer_kwargs"]["limit_val_batches"],
         )
@@ -212,7 +214,7 @@ def main(args):
                 "train",
                 nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
                 train_fraction=configs_data["train_fraction"],
-                augment_dataset=configs["model_kwargs"]["beta"] > 0,
+                augment_dataset=configs["model_kwargs"]["aug_weight"] > 0,
                 E_min=configs_data["E_min"]
             )
             val_dataset = CaloHitDataset(
@@ -220,7 +222,7 @@ def main(args):
                 "val",
                 nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
                 train_fraction=configs_data["train_fraction"],
-                 augment_dataset=configs["model_kwargs"]["beta"] > 0,
+                 augment_dataset=configs["model_kwargs"]["aug_weight"] > 0,
                 E_min=configs_data["E_min"]
             )
 

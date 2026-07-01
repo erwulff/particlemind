@@ -140,11 +140,7 @@ class CaloHitDataset(IterableDataset):
             x = np.array(event["x"], dtype=np.float32)
             y = np.array(event["y"], dtype=np.float32)
             z = np.array(event["z"], dtype=np.float32)
-
-         
             energy = np.array(event["total_energy"], dtype=np.float32)
-
-
 
             mask = energy >= self.E_min
             if mask.sum() == 0:
@@ -153,7 +149,6 @@ class CaloHitDataset(IterableDataset):
             calo_hit_features = np.column_stack(
                 (x[mask], y[mask], z[mask], energy[mask])
             )
-
             calo_hit_labels =  np.array(event["detector"])[mask]
 
             is_ECAL = np.isin(calo_hit_labels, [9, 10, 11])
@@ -161,19 +156,43 @@ class CaloHitDataset(IterableDataset):
 
             calo_hit_features_std = standardize_calo_hit_features_xyz(calo_hit_features)
 
-
-            to_yield = {
-                "labels_ECAL":calo_hit_labels[is_ECAL],
-                "labels_HCAL":calo_hit_labels[is_HCAL],
-                "calo_hit_features_HCAL": calo_hit_features_std[is_HCAL],
-                "calo_hit_features_ECAL": calo_hit_features_std[is_ECAL],
-                "subset": event["subset"]
-            }
-
-
             if self.augment_dataset: 
-                augmented_data = standardize_calo_hit_features_xyz(augment_data(calo_hit_features))
-                to_yield["calo_hit_features_augmented"] = augmented_data
+                calo_hit_features_aug, calo_hit_labels_aug = augment_data(
+                                        calo_hit_features, calo_hit_labels
+                                    )
+
+                calo_hit_features_aug_std = standardize_calo_hit_features_xyz(calo_hit_features_aug)
+
+                is_ECAL_aug = np.isin(calo_hit_labels_aug, [9, 10, 11])
+                is_HCAL_aug = np.isin(calo_hit_labels_aug, [12, 13, 14])
+
+                to_yield = {
+                    # original event
+                    "labels_ECAL": calo_hit_labels[is_ECAL],
+                    "labels_HCAL": calo_hit_labels[is_HCAL],
+                    "calo_hit_features_ECAL": calo_hit_features_std[is_ECAL],
+                    "calo_hit_features_HCAL": calo_hit_features_std[is_HCAL],
+            
+                    # augmented event
+                    "labels_ECAL_augmented": calo_hit_labels_aug[is_ECAL_aug],
+                    "labels_HCAL_augmented": calo_hit_labels_aug[is_HCAL_aug],
+                    "calo_hit_features_ECAL_augmented": calo_hit_features_aug_std[is_ECAL_aug],
+                    "calo_hit_features_HCAL_augmented": calo_hit_features_aug_std[is_HCAL_aug],
+            
+                    "subset": event["subset"],
+                }
+
+                
+
+            else:
+                to_yield = {
+                    "labels_ECAL":calo_hit_labels[is_ECAL],
+                    "labels_HCAL":calo_hit_labels[is_HCAL],
+                    "calo_hit_features_HCAL": calo_hit_features_std[is_HCAL],
+                    "calo_hit_features_ECAL": calo_hit_features_std[is_ECAL],
+                    "subset": event["subset"]
+                }
+                
 
   
 

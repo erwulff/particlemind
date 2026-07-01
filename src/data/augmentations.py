@@ -35,8 +35,7 @@ def global_phi_rotation(x, max_angle=2.0*np.pi):
     Assumes feature order: (x, y, z, E) or similar,
     """
 
-    phi_angle = np.random.random(1) * max_angle
-    phi_angle = np.pi
+    phi_angle = np.random.random() * max_angle
 
     # apply rotation
     x = np.copy(x)
@@ -51,11 +50,12 @@ def global_phi_rotation(x, max_angle=2.0*np.pi):
     return x
 
 
-def collinear_split(x, frac=0.01):
+def collinear_split(x, labels, frac=0.01):
     """
     Randomly split frac of the hits into two collinear hits with a random amount of energy
     """
     x = np.copy(x)
+    labels = np.copy(labels)
 
     num_hits = x.shape[0]
     num_split = int(num_hits * frac)
@@ -66,32 +66,38 @@ def collinear_split(x, frac=0.01):
     split_indices = np.random.choice(num_hits, size=num_split, replace=False)
 
     new_hits = []
+    new_labels = []
     for idx in split_indices:
-        hit = x[idx]
+        hit = np.copy(x[idx])
+        label = labels[idx]
         energy = hit[3]
         if energy <= 0:
             continue
         split_energy = energy * np.random.uniform(0.1, 0.9)
-        hit[3] -= split_energy
+        x[idx, 3] -= split_energy
         new_hit = np.copy(hit)
         new_hit[3] = split_energy
         new_hits.append(new_hit)
+        new_labels.append(label)
 
-    if new_hits:
-        x = np.concatenate([x, np.array(new_hits)], axis=0)
+    if len(new_hits) > 0:
+        x = np.concatenate([x, np.array(new_hits, dtype=x.dtype)], axis=0)
+        labels = np.concatenate([labels, np.array(new_labels, dtype=labels.dtype)], axis=0)
 
-    return x
+
+    return x, labels
 
 
 
 
   
-def augment_data(x):
+def augment_data(x, labels):
     """
     Apply stochastic augmentations.
     """
 
     x = np.copy(x)  # 🔴 critical: global safety clone
+    labels = np.copy(labels)
 
     # 1. random noise
     x = add_random_noise(x)
@@ -100,6 +106,6 @@ def augment_data(x):
     x = global_phi_rotation(x, max_angle = 0.5*np.pi)
 
     ## 3. collinear split
-    x = collinear_split(x)
+    x, labels = collinear_split(x, labels)
 
-    return x
+    return x, labels
