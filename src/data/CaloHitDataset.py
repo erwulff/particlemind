@@ -148,6 +148,7 @@ class CaloHitDataset(IterableDataset):
 
             calo_hit_features = np.column_stack(
                 (x[mask], y[mask], z[mask], energy[mask])
+                #(x[mask], y[mask], z[mask])
             )
             calo_hit_labels =  np.array(event["detector"])[mask]
 

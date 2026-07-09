@@ -24,7 +24,7 @@ from tqdm import tqdm
 from src.models.optimizers import configure_optimizers_base
 from src.models.positional_encoding import DetectorPosEnc
 from src.models.plotting import plot_model_hit, plot_model_patch
-from src.models.base_components import VQVAENormFormer, reco_loss_function
+from src.models.base_components import VQVAEMLP, VQVAENormFormer, reco_loss_function, mean_knn_distance
 
 from src.models.contrastive_losses import CLIP_loss
 
@@ -66,7 +66,11 @@ class VQVAELightningSingle(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(logger=False)
 
-        self.model = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
+        
+        if model_kwargs["model_type"] == "mlp":
+            self.model = VQVAEMLP(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
+        elif model_kwargs["model_type"] == "vae":
+            self.model = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
 
         
         self.train_loss_history = []
@@ -137,10 +141,7 @@ class VQVAELightningSingle(L.LightningModule):
 
 
 
-
-
-
-
+          
 
 
             loss_dict = {
@@ -150,6 +151,16 @@ class VQVAELightningSingle(L.LightningModule):
             
             
 
+
+
+            truth_knn = mean_knn_distance(x_hit, mask)
+            reco_knn  = mean_knn_distance(x_hit_reco, mask)
+            
+            knn_error = torch.abs(reco_knn - truth_knn)
+            
+            loss_dict["truth_knn"] = truth_knn
+            loss_dict["reco_knn"] = reco_knn
+            loss_dict["knn_error"] = knn_error
 
 
 

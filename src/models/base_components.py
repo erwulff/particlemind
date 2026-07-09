@@ -12,6 +12,110 @@ def safe(x):
 
 
 
+class VQVAEMLP(torch.nn.Module):
+    def __init__(
+        self,
+        input_dim=2,
+        latent_dim=2,
+        data_type="",
+        encoder_layers=None,
+        decoder_layers=None,
+        vq_kwargs=None,
+        **kwargs,
+    ):
+        """Initializes the VQ-VAE model.
+
+        Parameters
+        ----------
+        codebook_size : int, optional
+            The size of the codebook. The default is 8.
+        embed_dim : int, optional
+            The dimension of the embedding space. The default is 2.
+        input_dim : int, optional
+            The dimension of the input data. The default is 2.
+        encoder_layers : list, optional
+            List of integers representing the number of units in each encoder layer.
+            If None, a default encoder with a single linear layer is used. The default is None.
+        decoder_layers : list, optional
+            List of integers representing the number of units in each decoder layer.
+            If None, a default decoder with a single linear layer is used. The default is None.
+        """
+
+        super().__init__()
+
+        self.loss_history = []
+        self.lr_history = []
+
+        self.vq_kwargs = vq_kwargs
+        self.embed_dim = latent_dim
+        self.input_dim = input_dim  # for jet constituents, eta and phi
+        self.data_type = data_type
+
+        # --- Encoder --- #
+        if encoder_layers is None:
+            self.encoder = torch.nn.Linear(self.input_dim, self.embed_dim)
+        else:
+            enc_layers = []
+            enc_layers.append(torch.nn.Linear(self.input_dim, encoder_layers[0]))
+            enc_layers.append(torch.nn.ReLU())
+
+            for i in range(len(encoder_layers) - 1):
+                enc_layers.append(torch.nn.Linear(encoder_layers[i], encoder_layers[i + 1]))
+                enc_layers.append(torch.nn.ReLU())
+            enc_layers.append(torch.nn.Linear(encoder_layers[-1], self.embed_dim))
+
+            self.encoder = torch.nn.Sequential(*enc_layers)
+
+        
+
+        # --- Decoder --- #
+        if decoder_layers is None:
+            self.decoder = torch.nn.Linear(self.embed_dim, self.input_dim)
+        else:
+            dec_layers = []
+            dec_layers.append(torch.nn.Linear(self.embed_dim, decoder_layers[0]))
+            dec_layers.append(torch.nn.ReLU())
+
+            for i in range(len(decoder_layers) - 1):
+                dec_layers.append(torch.nn.Linear(decoder_layers[i], decoder_layers[i + 1]))
+                dec_layers.append(torch.nn.ReLU())
+            dec_layers.append(torch.nn.Linear(decoder_layers[-1], self.input_dim))
+
+            self.decoder = torch.nn.Sequential(*dec_layers)
+
+
+        # --- Vector-quantization layer --- #
+        if self.vq_kwargs is not None:
+            self.vqlayer = VectorQuant(feature_size=self.embed_dim, **vq_kwargs)
+
+    def forward(self, batch, x, mask):
+
+        if self.data_type == "hit":
+
+            """
+            Inputs:
+                batch: TENSOR
+            """
+
+            
+            # mask is there for compatibility with the transformer model
+            # encode
+            z_embed = self.encoder(x)
+            # quantize
+            if self.vq_kwargs is not None:
+                z_q2, vq_out = self.vqlayer(z_embed)
+            else:
+                z_q2, vq_out = z_embed, None
+            # decode
+            x_reco = self.decoder(z_q2)
+            
+            return x_reco, vq_out, z_embed
+    
+    
+
+
+
+
 
 class NormformerBlock(nn.Module):
     def __init__(self, input_dim, mlp_dim, num_heads, dropout_rate=0.1):
@@ -402,3 +506,30 @@ def reco_loss_function(x_hit_truth, x_hit_reco, mask, loss_type="mse"):
     else:
         raise ValueError(f"Unknown loss_type: {loss_type}")
     return loss
+
+
+def mean_knn_distance(x, mask, k=5):
+    """
+    x : (B,N,4)
+    mask : (B,N)
+    """
+
+    out = []
+
+    for pts, m in zip(x, mask):
+        pts = pts[m.bool()]
+
+        if pts.shape[0] <= k:
+            out.append(torch.tensor(0., device=x.device))
+            continue
+
+        dist = torch.cdist(pts, pts)
+
+        # ignore self
+        dist.fill_diagonal_(float("inf"))
+
+        knn = dist.topk(k, largest=False).values
+
+        out.append(knn.mean())
+
+    return torch.stack(out).mean()
