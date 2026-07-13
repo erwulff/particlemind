@@ -13,7 +13,7 @@ model_kwargs:
   num_heads: 2
   num_blocks: 2
   alpha: 5
-  beta: 1 # ssl 
+  beta: 0 # ssl 
   vq_kwargs: null
 
 

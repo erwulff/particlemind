@@ -71,11 +71,11 @@ def plot_model_hit(input_data, reco, labels, device="cuda", n_events_to_plot=2, 
 
         if masks is not None:
             mask = masks[event]
-            #event_samples_E.append(input_data[event, :, 3][mask == 1])
+            event_samples_E.append(input_data[event, :, 3][mask == 1])
             event_samples_x.append(input_data[event, :, 0][mask == 1])
             event_samples_y.append(input_data[event, :, 1][mask == 1])
             event_samples_z.append(input_data[event, :, 2][mask == 1])
-            #reco_samples_E.append(reco[event, :, 3][mask == 1])
+            reco_samples_E.append(reco[event, :, 3][mask == 1])
             reco_samples_x.append(reco[event, :, 0][mask == 1])
             reco_samples_y.append(reco[event, :, 1][mask == 1])
             reco_samples_z.append(reco[event, :, 2][mask == 1])
@@ -86,11 +86,11 @@ def plot_model_hit(input_data, reco, labels, device="cuda", n_events_to_plot=2, 
                 idx.append(master_idx[event].squeeze(1)[mask == 1])
 
         else:
-            #event_samples_E.append(input_data[event, :, 3])
+            event_samples_E.append(input_data[event, :, 3])
             event_samples_x.append(input_data[event, :, 0])
             event_samples_y.append(input_data[event, :, 1])
             event_samples_z.append(input_data[event, :, 2])
-            #reco_samples_E.append(reco[event, :, 3])
+            reco_samples_E.append(reco[event, :, 3])
             reco_samples_x.append(reco[event, :, 0])
             reco_samples_y.append(reco[event, :, 1])
             reco_samples_z.append(reco[event, :, 2])
@@ -101,16 +101,16 @@ def plot_model_hit(input_data, reco, labels, device="cuda", n_events_to_plot=2, 
                 idx.append(master_idx[event].squeeze(1))
 
     # concatenate all events
-    #event_samples_E_concat = np.concatenate(event_samples_E)
-    # event_samples_x_concat = np.concatenate(event_samples_x)
-    # event_samples_y_concat = np.concatenate(event_samples_y)
-    # event_samples_z_concat = np.concatenate(event_samples_z)
+    event_samples_E_concat = np.concatenate(event_samples_E)
+    event_samples_x_concat = np.concatenate(event_samples_x)
+    event_samples_y_concat = np.concatenate(event_samples_y)
+    event_samples_z_concat = np.concatenate(event_samples_z)
     
-    #reco_samples_E_concat = np.concatenate(reco_samples_E)
-    # reco_samples_x_concat = np.concatenate(reco_samples_x)
-    # reco_samples_y_concat = np.concatenate(reco_samples_y)
-    # reco_samples_z_concat = np.concatenate(reco_samples_z)
-    # labels_event_concat =  np.concatenate(labels_event)
+    reco_samples_E_concat = np.concatenate(reco_samples_E)
+    reco_samples_x_concat = np.concatenate(reco_samples_x)
+    reco_samples_y_concat = np.concatenate(reco_samples_y)
+    reco_samples_z_concat = np.concatenate(reco_samples_z)
+    labels_event_concat =  np.concatenate(labels_event)
     if vq_out is not None:
         z_e_concat = np.concatenate(z_e)
         z_q_concat = np.concatenate(z_q)
@@ -128,26 +128,26 @@ def plot_model_hit(input_data, reco, labels, device="cuda", n_events_to_plot=2, 
     fig, axarr = plt.subplots(1, 7, figsize=(7*7, 7))
 
     # histogram the energies
-    # ax = axarr[0]
-    # all_E = np.concatenate([event_samples_E_concat, reco_samples_E_concat])
+    ax = axarr[0]
+    all_E = np.concatenate([event_samples_E_concat, reco_samples_E_concat])
     
-    # bins = np.linspace(np.min(all_E),  np.max(all_E), 50)
-    # ax.hist(event_samples_E_concat, bins=bins, label="samples", density=True, histtype="step", linewidth=2)
-    # ax.hist(reco_samples_E_concat, bins=bins, label="reco", density=True, histtype="step", linewidth=2)
-    # ax.set_yscale("log")
-    # ax.set_xlabel("$E$")
-    # ax.set_ylabel("Density")
-    # ax.legend(loc="upper right")
+    bins = np.linspace(np.min(all_E),  np.max(all_E), 50)
+    ax.hist(event_samples_E_concat, bins=bins, label="samples", density=True, histtype="step", linewidth=2)
+    ax.hist(reco_samples_E_concat, bins=bins, label="reco", density=True, histtype="step", linewidth=2)
+    ax.set_yscale("log")
+    ax.set_xlabel("$E$")
+    ax.set_ylabel("Density")
+    ax.legend(loc="upper right")
 
-    # tmp = (event_samples_E_concat - reco_samples_E_concat)/event_samples_E_concat
-    # mm = (~np.isnan(tmp)) & (~np.isinf(tmp))
+    tmp = (event_samples_E_concat - reco_samples_E_concat)/event_samples_E_concat
+    mm = (~np.isnan(tmp)) & (~np.isinf(tmp))
 
-    # # histogram the difference in energy
-    # ax = axarr[1]
-    # ax.hist(tmp[mm], bins=50, density=True, histtype="step", linewidth=2)
-    # ax.set_xlabel("$E_{true} - E_{reco}$ /$E_{true}$ ")
-    # ax.set_ylabel("Density")
-    # ax.set_yscale("log")
+    # histogram the difference in energy
+    ax = axarr[1]
+    ax.hist(tmp[mm], bins=50, density=True, histtype="step", linewidth=2)
+    ax.set_xlabel("$E_{true} - E_{reco}$ /$E_{true}$ ")
+    ax.set_ylabel("Density")
+    ax.set_yscale("log")
 
     if vq_out is not None:
 
@@ -258,24 +258,24 @@ def plot_model_hit(input_data, reco, labels, device="cuda", n_events_to_plot=2, 
 
 
     # # resolution (cluster energy)
-    # ax = axarr[5]
-    # unique_labels = [np.unique(l) for l in labels_event]
-    # hit_clusters_true, hit_clusters_reco = [], []
+    ax = axarr[5]
+    unique_labels = [np.unique(l) for l in labels_event]
+    hit_clusters_true, hit_clusters_reco = [], []
     
-    # for event_i, labels_event_i in enumerate(labels_event):
-    #     for unique_label_event_i in unique_labels[event_i]:
-    #         mask_event_i_label_i = labels_event_i == unique_label_event_i
-    #         hit_clusters_true.append(np.sum(event_samples_E[event_i][mask_event_i_label_i]))
-    #         hit_clusters_reco.append(np.sum(reco_samples_E[event_i][mask_event_i_label_i]))
+    for event_i, labels_event_i in enumerate(labels_event):
+        for unique_label_event_i in unique_labels[event_i]:
+            mask_event_i_label_i = labels_event_i == unique_label_event_i
+            hit_clusters_true.append(np.sum(event_samples_E[event_i][mask_event_i_label_i]))
+            hit_clusters_reco.append(np.sum(reco_samples_E[event_i][mask_event_i_label_i]))
 
-    # tmp = (np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true)
-    # mm = (~np.isnan(tmp)) & (~np.isinf(tmp))
+    tmp = (np.array(hit_clusters_true) - np.array(hit_clusters_reco))/np.array(hit_clusters_true)
+    mm = (~np.isnan(tmp)) & (~np.isinf(tmp))
 
-    # ax.hist(tmp[mm], bins=50, density=True, histtype="step", linewidth=2)
-    # ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{true}$ per cluster")
-    # ax.set_ylabel("Density")
-    # ax.set_yscale("log")
-    #ax.legend(loc="upper right")
+    ax.hist(tmp[mm], bins=50, density=True, histtype="step", linewidth=2)
+    ax.set_xlabel( "$E_{true} - E_{reco}$  / $E_{true}$ per cluster")
+    ax.set_ylabel("Density")
+    ax.set_yscale("log")
+    ax.legend(loc="upper right")
 
 
     

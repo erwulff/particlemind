@@ -9,11 +9,10 @@ trainer_kwargs:
 loss_type: "mse"
 
 model_kwargs:
-  model_type: "vae"
+  model_type: "mlp"
   latent_dim: 4
-  hidden_dim: 128
-  num_heads: 2
-  num_blocks: 2
+  encoder_layers: [128, 128]
+  decoder_layers: [128, 128]
   alpha: 5
   shared_weight: 2 
   aug_weight: 0
