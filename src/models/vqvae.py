@@ -72,6 +72,7 @@ class VQVAELightningSingle(L.LightningModule):
         elif model_kwargs["model_type"] == "vae":
             self.model = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
 
+
         
         self.train_loss_history = []
         self.val_loss_list = []
@@ -144,6 +145,9 @@ class VQVAELightningSingle(L.LightningModule):
           
 
 
+
+
+
             loss_dict = {
                 "reco_loss": reco_loss,
                 "cosine_similarity": cos_sim,
@@ -158,8 +162,8 @@ class VQVAELightningSingle(L.LightningModule):
             
             knn_error = torch.abs(reco_knn - truth_knn)
             
-            loss_dict["truth_knn"] = truth_knn
-            loss_dict["reco_knn"] = reco_knn
+            # loss_dict["truth_knn"] = truth_knn
+            # loss_dict["reco_knn"] = reco_knn
             loss_dict["knn_error"] = knn_error
 
 

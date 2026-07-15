@@ -24,6 +24,7 @@ from tqdm import tqdm
 from src.models.optimizers import configure_optimizers_base
 from src.models.positional_encoding import DetectorPosEnc
 from src.models.plotting import plot_model_hit, plot_model_patch
+from src.models.base_components import VQVAEMLP, VQVAENormFormer, reco_loss_function, mean_knn_distance
 
 from src.models.contrastive_losses import CLIP_loss
 
@@ -64,10 +65,15 @@ class VQVAELightningDouble(L.LightningModule):
     ) -> None:
         super().__init__()
         self.save_hyperparameters(logger=False)
-        
-        self.model_HCAL = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
-        self.model_ECAL = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
 
+
+        if model_kwargs["model_type"] == "mlp":
+            self.model_HCAL = VQVAEMLP(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
+            self.model_ECAL = VQVAEMLP(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
+        elif model_kwargs["model_type"] == "vae":
+            self.model_HCAL = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
+            self.model_ECAL = VQVAENormFormer(**model_kwargs, vit_kwargs=vit_kwargs, data_type=data_type,)
+        
         self.train_loss_history = []
         self.val_loss_list = []
 
@@ -123,7 +129,7 @@ class VQVAELightningDouble(L.LightningModule):
             x_hit_HCAL_reco, vq_out, z_embed_HCAL = self.model_HCAL(None, x_hit_HCAL, mask_HCAL) # batch not used
 
     
-            reco_loss_ECAL = self.reco_loss(x_hit_ECAL, x_hit_ECAL_reco, mask_ECAL)
+            reco_loss_ECAL = reco_loss_function(x_hit_ECAL, x_hit_ECAL_reco, mask_ECAL)
             loss += reco_loss_ECAL
             
             x1 = F.normalize(x_hit_ECAL, dim=-1, eps=1e-8)       # [2, # hits, 4]
@@ -133,7 +139,7 @@ class VQVAELightningDouble(L.LightningModule):
                 / mask_ECAL.sum().clamp(min=1)
             )
 
-            reco_loss_HCAL = self.reco_loss(x_hit_HCAL, x_hit_HCAL_reco, mask_HCAL)
+            reco_loss_HCAL = reco_loss_function(x_hit_HCAL, x_hit_HCAL_reco, mask_HCAL)
             loss += reco_loss_HCAL
             x1 = F.normalize(x_hit_HCAL, dim=-1, eps=1e-8)       # [2, # hits, 4]
             x2 = F.normalize(x_hit_HCAL_reco, dim=-1, eps=1e-8)  # [2, # hits, 4]
@@ -154,6 +160,16 @@ class VQVAELightningDouble(L.LightningModule):
             loss += shared_weight * shared_loss
             loss_dict["shared_loss"] = shared_loss
 
+            truth_knn_ECAL = mean_knn_distance(x_hit_ECAL, mask_ECAL)
+            reco_knn_ECAL = mean_knn_distance(x_hit_ECAL_reco, mask_ECAL)
+            truth_knn_HCAL = mean_knn_distance(x_hit_HCAL, mask_HCAL)
+            reco_knn_HCAL = mean_knn_distance(x_hit_HCAL_reco, mask_HCAL)
+
+            knn_error_ECAL = torch.abs(truth_knn_ECAL - reco_knn_ECAL)
+            knn_error_HCAL = torch.abs(truth_knn_HCAL - reco_knn_HCAL)
+
+            loss_dict["knn_error_ECAL"] = knn_error_ECAL
+            loss_dict["knn_error_HCAL"] = knn_error_HCAL
   
             if aug_weight != 0:
                 ECAL_aug_loss = CLIP_loss(z_embed_ECAL, z_embed_ECAL_augmented, mask_ECAL, mask_ECAL_augmented)
@@ -242,7 +258,7 @@ class VQVAELightningDouble(L.LightningModule):
         for loss_type in loss_dict.keys():
             self.log(
                     f"train/{loss_type}",
-                    safe(loss_dict[loss_type]),               # <-- pass the tensor, not loss.item()
+                    loss_dict[loss_type],               # <-- pass the tensor, not loss.item()
                     on_step=True,
                     on_epoch=True,       # optional if you also want epoch avg
                     prog_bar=True,
@@ -287,7 +303,7 @@ class VQVAELightningDouble(L.LightningModule):
         for loss_type in loss_dict.keys():
             self.log(
                 f"val/{loss_type}",
-                safe(loss_dict[loss_type]),
+                loss_dict[loss_type],
                 on_step=True,
                 on_epoch=True,
                 prog_bar=True,

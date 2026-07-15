@@ -9,7 +9,7 @@ import logging
 from src.data.augmentations import standardize_calo_hit_features_xyz, augment_data
 
 
-class CaloHitDataset(IterableDataset):
+class CaloHitDatasetSingle(IterableDataset):
     def __init__(
         self,
         subsets,
