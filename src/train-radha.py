@@ -26,7 +26,7 @@ from lightning.fabric.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 #from src.data.CaloHitDatasetCAL import CaloHitDataset
-from src.data.CaloHitDataset import CaloHitDataset
+
 from src.data.CaloPatchDataset import CaloPatchDataset
 
 from src.data.Tokens import Tokens, TokensSingleFile
@@ -35,7 +35,9 @@ from src.data.patching import build_patch_registry
 from src.data.utils import CollaterPatch, CollaterHits
 from src.models.backbone import BackboneNextTokenPredictionLightning
 
-from src.models.vqvae import VQVAELightningSingle as VQVAELightning
+from src.data.CaloHitDatasetCAL import CaloHitDatasetDouble as CaloHitDataset
+from src.models.vqvae_double import VQVAELightningDouble as VQVAELightning
+
 #from src.models.vqvae_double import VQVAELightning
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
