@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from src.models.positional_encoding import DetectorPosEnc
 
 def safe(x):
     if torch.is_tensor(x):
@@ -336,8 +337,12 @@ class VQVAENormFormer(torch.nn.Module):
             # 1. encode each patch group
             for key in keys:
 
+
            
                 emb = self.linear_projection_encoders[str(key)](batch[key]["flat_tensor"])  # (B, P_k, D) P_k = num. patches per key. should have sum P_k = P
+
+
+
                 P_k = emb.shape[1]
                 embeddings.append(emb)
                 global_patch_ids.append(batch[key]["global_patch_ids"])
@@ -350,7 +355,8 @@ class VQVAENormFormer(torch.nn.Module):
             global_patch_ids = torch.cat(global_patch_ids, dim=1)  # (B, P_total)
             local_patch_ids  = torch.cat(local_patch_ids,  dim=1)  # (B, P_total, 3)
             patch_mask       = torch.cat(patch_mask,             dim=1)  # (B, P_total)
-        
+
+
             # 3. reorder all tensors by global patch id
             order   = torch.argsort(global_patch_ids, dim=1)
             order_D = order.unsqueeze(-1).expand_as(embeddings)
@@ -398,8 +404,6 @@ class VQVAENormFormer(torch.nn.Module):
             return e, e_reco, {key:batch[key]["flat_tensor"] for key in batch.keys()}, x_reco_chunks, vq_out
 
         elif self.data_type == "hit":
-
-            
 
 
             """

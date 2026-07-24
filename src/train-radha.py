@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 # Force Hugging Face datasets cache to local scratch (avoid NFS filelock hangs)
+os.environ["HF_TOKEN"] = "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"
 os.environ["HF_DATASETS_CACHE"] = f"/tmp/{os.environ['USER']}/hf_datasets_cache"
 os.environ["HF_HOME"] = f"/tmp/{os.environ['USER']}/hf_home"
 # Disable file locks entirely for streaming datasets
@@ -36,7 +37,8 @@ from src.data.utils import CollaterPatch, CollaterHits
 from src.models.backbone import BackboneNextTokenPredictionLightning
 
 from src.data.CaloHitDatasetCAL import CaloHitDatasetDouble as CaloHitDataset
-from src.models.vqvae_double import VQVAELightningDouble as VQVAELightning
+#from src.models.vqvae_double import VQVAELightningDouble as VQVAELightning
+from src.models.vqvae import VQVAELightningSingle as VQVAELightning
 
 #from src.models.vqvae_double import VQVAELightning
 from torch.utils.data import DataLoader
@@ -166,7 +168,7 @@ def main(args):
             # build the patch registry
             with open(f"configs/detector_patching_params.yaml", "r") as file:
                 detector_patching_params = yaml.safe_load(file)[configs_data["system"]]
-                print_rank0(configs)
+                #print_rank0(configs)
 
 
     
@@ -188,22 +190,29 @@ def main(args):
             registry_endcap_neg, unique_patch_sizes_endcap_neg, num_patches_endcap_neg = build_patch_registry(detector_patching_params, side="negative")
             print("Negative endcap registry built with unique patch sizes:", num_patches_endcap_neg)
                            
-    
+            print("Total unique patch sizes:", num_patches_barrel + num_patches_endcap_pos + num_patches_endcap_neg)
+            print()
             vit_kwargs = configs_data["vit_kwargs"]
-            vit_kwargs["unique_patch_sizes_barrel_dict"] = unique_patch_sizes_barrel
-            vit_kwargs["unique_patch_sizes_endcap_pos_dict"] = unique_patch_sizes_endcap_pos  # po and neg endcaps have the same unique patch sizes
-            #vit_kwargs["unique_patch_sizes_endcap_neg_dict"] = unique_patch_sizes_endcap_neg
             vit_kwargs["NUM_TOTAL_PATCHES"] = num_patches_barrel + num_patches_endcap_pos + num_patches_endcap_neg
-          
-     
-            # arguments for the positional encoding
-            vit_kwargs["barrel_n_bins_z"] = detector_patching_params["barrel_configs"]["n_bins_z"]
-            vit_kwargs["barrel_n_phi_patches"] = registry_barrel["n_phi_patches"]
-            vit_kwargs["barrel_n_rings"] = registry_barrel["n_rings"]
 
-            vit_kwargs["endcap_pos_n_bins_z"] = detector_patching_params["endcap_configs"]["n_bins_z"]
-            vit_kwargs["endcap_pos_n_phi_patches"] = registry_endcap_pos["n_phi_patches"]
-            vit_kwargs["endcap_pos_n_rings"] = registry_endcap_pos["n_rings"]
+            # Combined patch-size dict keyed by region-prefixed strings, e.g.
+            # "barrel_(0, 0)", "endcap_pos_(0, 0)".  This mirrors how CaloPatchDataset
+            # names its output keys, and is what VQVAENormFormer uses to build its
+            # per-patch-shape linear encoders.
+            combined_patch_sizes = {}
+            for k, v in unique_patch_sizes_barrel.items():
+                combined_patch_sizes[f"barrel_{k}"] = v
+            for k, v in unique_patch_sizes_endcap_pos.items():
+                combined_patch_sizes[f"endcap_pos_{k}"] = v
+            for k, v in unique_patch_sizes_endcap_neg.items():
+                combined_patch_sizes[f"endcap_neg_{k}"] = v
+            vit_kwargs["unique_patch_sizes_dict"] = combined_patch_sizes
+
+            # Positional encoding dimensions.  Ring and z indices are offset per
+            # region in CaloPatchDataset so the embedding tables see unique indices.
+            vit_kwargs["n_rings"]      = registry_barrel["n_rings"] + 2 * registry_endcap_pos["n_rings"]
+            vit_kwargs["n_phi_patches"] = registry_barrel["n_phi_patches"]  # 64 for all regions
+            vit_kwargs["n_bins_z"]     = registry_barrel["n_z_patches"] + 2 * registry_endcap_pos["n_z_patches"]
 
             configs["model_kwargs"]["input_dim"] = configs_data["vit_kwargs"]["D_EMBEDDING"]
             
@@ -212,6 +221,7 @@ def main(args):
             train_dataset = CaloPatchDataset(
                 configs_data["subsets"],
                 "train",
+                detector_type=configs_data["system"],
                 patch_registry_barrel=registry_barrel,
                 patch_registry_endcap_pos=registry_endcap_pos,
                 patch_registry_endcap_neg=registry_endcap_neg,
@@ -222,6 +232,7 @@ def main(args):
             val_dataset = CaloPatchDataset(
                 configs_data["subsets"],
                 "val",
+                detector_type=configs_data["system"],
                 patch_registry_barrel=registry_barrel,
                 patch_registry_endcap_pos=registry_endcap_pos,
                 patch_registry_endcap_neg=registry_endcap_neg,
@@ -261,7 +272,7 @@ def main(args):
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=collate_func,
             num_workers=configs_data["num_workers"],
-            persistent_workers=True,
+            persistent_workers=False,
             pin_memory=True,
         )
         val_loader = DataLoader(
@@ -269,7 +280,7 @@ def main(args):
             batch_size=configs_data["batch_size_per_gpu"],
             collate_fn=collate_func,
             num_workers=configs_data["num_workers"],
-            persistent_workers=True,
+            persistent_workers=False,
             pin_memory=True,
         )
 

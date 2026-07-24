@@ -11,7 +11,7 @@ from src.data.patching import assign_hits_to_patches, assign_hits_to_patches
 class CaloPatchDataset(IterableDataset):
     def __init__(
         self,
-        subset,
+        subsets,
         split,
         detector_type,
         patch_registry_barrel,
@@ -23,7 +23,7 @@ class CaloPatchDataset(IterableDataset):
         start_idx=None,
         stop_idx=None,
     ):
-        self.subset = subset
+        self.subsets = subsets
         self.split = split
         self.nsamples = nsamples
         self.train_fraction = train_fraction
@@ -38,17 +38,40 @@ class CaloPatchDataset(IterableDataset):
         self.patch_registry_endcap_neg = patch_registry_endcap_neg
         self.detector_patching_params = detector_patching_params
 
+        # Per-region offsets so global patch IDs and local (ring, z) indices are
+        # non-overlapping across barrel + two endcaps (required for deterministic argsort
+        # and non-aliased positional encoding embeddings).
+        self._n_barrel      = len(patch_registry_barrel["patches"])
+        self._n_endcap_pos  = len(patch_registry_endcap_pos["patches"])
+
+        self._r_off_endcap_pos = patch_registry_barrel["n_rings"]
+        self._r_off_endcap_neg = patch_registry_barrel["n_rings"] + patch_registry_endcap_pos["n_rings"]
+
+        self._z_off_endcap_pos = patch_registry_barrel["n_z_patches"]
+        self._z_off_endcap_neg = patch_registry_barrel["n_z_patches"] + patch_registry_endcap_pos["n_z_patches"]
+
 
 
     def _get_stream(self):
-        return load_dataset(
-            "CERN/ColliderML-Release-1",
-            self.subset,
-            split="train",
-            streaming=True,
-            
-            columns=["detector", "total_energy", "x", "y", "z"],
-        )
+        def stream_with_subset(subset_name, subset_id):
+            dataset = load_dataset(
+                "CERN/ColliderML-Release-1",
+                subset_name,
+                split="train",
+                streaming=True,
+                columns=["event_id", "detector", "total_energy", "x", "y", "z"],
+            )
+            for event in dataset:
+                event["subset"] = subset_name      # human-readable
+                #event["subset_id"] = subset_id     # numeric (better for models)
+                yield event
+
+        streams = [
+            stream_with_subset(subset, i)
+            for i, subset in enumerate(self.subsets)
+        ]
+
+        return itertools.chain.from_iterable(zip(*streams))
 
     def __len__(self):
         if self.nsamples is not None:
@@ -162,9 +185,26 @@ class CaloPatchDataset(IterableDataset):
                 self.detector_patching_params
             )
 
-            # somehow combine the barrel, endcaps...
-
-        
-
+            # Combine barrel + endcaps into one dict.
+            # Keys are prefixed ("barrel_", "endcap_pos_", "endcap_neg_") to avoid
+            # collisions.  Ring and z local_patch_ids are shifted so the positional
+            # encoding embedding tables see globally-unique indices across all three
+            # regions.  global_patch_ids are shifted for the same reason (argsort).
+            output = {}
+            for region_tag, region_out, gid_off, r_off, z_off in [
+                ("barrel",     output_barrel,     0,                                         0,                   0),
+                ("endcap_pos", output_endcap_pos, self._n_barrel,                            self._r_off_endcap_pos, self._z_off_endcap_pos),
+                ("endcap_neg", output_endcap_neg, self._n_barrel + self._n_endcap_pos,       self._r_off_endcap_neg, self._z_off_endcap_neg),
+            ]:
+                for k, v in region_out.items():
+                    local_ids = v["local_patch_ids"].copy()
+                    local_ids[:, 0] += r_off  # ring index
+                    local_ids[:, 2] += z_off  # z index
+                    output[f"{region_tag}_{k}"] = {
+                        "flat_tensor":      v["flat_tensor"],
+                        "global_patch_ids": v["global_patch_ids"] + gid_off,
+                        "local_patch_ids":  local_ids,
+                        "patch_positions":  v["patch_positions"],
+                    }
 
             yield output

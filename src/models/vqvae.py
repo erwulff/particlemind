@@ -22,7 +22,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from src.models.optimizers import configure_optimizers_base
-from src.models.positional_encoding import DetectorPosEnc
+
 from src.models.plotting import plot_model_hit, plot_model_patch
 from src.models.base_components import VQVAEMLP, VQVAENormFormer, reco_loss_function, mean_knn_distance
 
@@ -218,7 +218,7 @@ class VQVAELightningSingle(L.LightningModule):
     
         elif self.data_type == "patch":
     
-            embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.forward(batch, None, None) # x, mask not used
+            embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.model(batch, None, None) # x, mask not used
             
             
             losses = []

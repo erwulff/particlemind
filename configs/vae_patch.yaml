@@ -1,19 +1,21 @@
 trainer_kwargs:
   visible_devices: "0"
   accumulate_grad_batches: 128
-  max_epochs: 20
+  max_epochs: 2
   precision: 16-mixed
   #limit_train_batches: 18000
   #limit_val_batches: 4500
 
 
 model_kwargs:
+  model_type: "vae"
   latent_dim: 16
   hidden_dim: 128
   num_heads: 2
   num_blocks: 2
   alpha: 5
-  beta: 0 # ssl 
+  beta: 0 # ssl
+  aug_weight: 0
   vq_kwargs: null
 
 

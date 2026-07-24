@@ -1,8 +1,34 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+from collections import defaultdict
+from matplotlib.patches import Patch
 
- 
+# Region colours / labels shared across all patch plots
+_REGION_COLORS = {"barrel": "#1f77b4", "endcap_pos": "#ff7f0e", "endcap_neg": "#2ca02c"}
+_REGION_LABELS = {"barrel": "Barrel", "endcap_pos": "Endcap (+z)", "endcap_neg": "Endcap (−z)"}
+
+
+def _region_from_key(key):
+    """'barrel_(0, 1)' -> 'barrel'"""
+    return key.split("_(")[0]
+
+
+def _ring_from_key(key):
+    """'barrel_(1, 2)' -> 1"""
+    return int(key.split("_(")[1].split(",")[0].strip())
+
+
+def _flat_to_2d(flat, cpz):
+    """Reshape a flat patch tensor to (n_phi_total, cpz); fall back to column if not divisible."""
+    if cpz > 1 and len(flat) % cpz == 0:
+        return flat.reshape(-1, cpz)
+    return flat.reshape(-1, 1)
+
+
+def _axes_empty(ax):
+    return not (ax.lines or ax.patches or ax.collections or ax.images or ax.texts or ax.artists or ax.tables)
+
 
 def plot_model_hit(input_data, reco, labels, device="cuda", n_events_to_plot=2, n_scatterpoints_to_plot=200, masks=None, saveas=None):
     """Visualize the model.
@@ -385,214 +411,430 @@ def plot_model_hit(input_data, reco, labels, device="cuda", n_events_to_plot=2, 
 
         
         
-def plot_model_patch(batch, patches_chunked_reco, vq_out, num_codes, device="cuda", n_scatterpoints_to_plot=300, saveas=None):
-
-    def is_axes_empty(ax):
-        return not (ax.lines or ax.patches or ax.collections or ax.images or ax.texts or ax.artists or ax.tables)
-
-    # -----------------------------
-    # LATENT + CODEBOOK (UNCHANGED)
-    # -----------------------------
+def plot_model_patch(
+    batch,
+    patches_chunked_reco,
+    vq_out,
+    num_codes,
+    device="cuda",
+    n_scatterpoints_to_plot=300,
+    # cells_per_patch_z for the 2-D patch-interior images.
+    # For HCAL: barrel=11, endcap=1.  Change for ECAL (barrel=57, endcap=1).
+    cells_per_patch_z_barrel=11,
+    cells_per_patch_z_endcap=1,
+    saveas=None,
+):
+    # ------------------------------------------------------------------ #
+    # Unpack VQ tensors (safe against extra trailing dim)
+    # ------------------------------------------------------------------ #
     if vq_out is not None:
-        master_z_q = vq_out["z_q"].squeeze(2).detach().cpu().numpy() # (B, P, LATENT_DIM)
-        master_z_e = vq_out["z"].squeeze(2).detach().cpu().numpy() # (B, P, LATENT_DIM)
-        master_idx = vq_out["q"].squeeze(2).detach().cpu().numpy() # (B, P) 
-    
-    
-    
-        # flatten across all batches
-        z_q_concat = np.concatenate([master_z_q[i] for i in range(len(master_z_q))]) # (B*P, LATENT_DIM)
-        z_e_concat = np.concatenate([master_z_e[i] for i in range(len(master_z_e))]) # (B*P, LATENT_DIM)
-        idx_concat = np.concatenate([master_idx[i] for i in range(len(master_idx))]) # (B*P)
+        master_z_q = vq_out["z_q"].detach().cpu().numpy()
+        master_z_e = vq_out["z"].detach().cpu().numpy()
+        master_idx = vq_out["q"].detach().cpu().numpy()
+        if master_idx.ndim == 3:
+            master_idx = master_idx.squeeze(2)
 
+    B = next(iter(batch.values()))["flat_tensor"].shape[0]
 
-    # ✅ CHANGED: now 4 panels (added resolution)
-    fig, axarr = plt.subplots(1, 4, figsize=(7*4, 7))  # CHANGED
+    # gid_region[b][gid] = region string — used to colour latent-space points
+    gid_region = [{} for _ in range(B)]
+    for key in batch.keys():
+        region = _region_from_key(key)
+        for b in range(B):
+            for gid in batch[key]["global_patch_ids"][b].cpu().numpy().tolist():
+                gid_region[b][int(gid)] = region
 
-    if vq_out is not None:
-    
-        # scatter z_q vs z_e
-        ax = axarr[0]
-        ind0, ind1 = 0, 1
-        ax.scatter(z_q_concat[:n_scatterpoints_to_plot, ind0],
-                   z_q_concat[:n_scatterpoints_to_plot, ind1],
-                   alpha=0.2, s=26, label="z_q")
-        ax.scatter(z_e_concat[:n_scatterpoints_to_plot, ind0],
-                   z_e_concat[:n_scatterpoints_to_plot, ind1],
-                   alpha=0.7, s=26, marker="x", label="z_e")
-        ax.set_xlabel(f"$x_{ind0}$")
-        ax.set_ylabel(f"$x_{ind1}$")
-        ax.set_title("Latent space: z_q vs z_e")
-        ax.legend()
-    
-        ax = axarr[1]
-        ind0, ind1 = 0, 2
-        ax.scatter(z_q_concat[:n_scatterpoints_to_plot, ind0],
-                   z_q_concat[:n_scatterpoints_to_plot, ind1],
-                   alpha=0.2, s=26, label="z_q")
-        ax.scatter(z_e_concat[:n_scatterpoints_to_plot, ind0],
-                   z_e_concat[:n_scatterpoints_to_plot, ind1],
-                   alpha=0.7, s=26, marker="x", label="z_e")
-        ax.set_xlabel(f"$x_{ind0}$")
-        ax.set_ylabel(f"$x_{ind1}$")
-        ax.set_title("Latent space: z_q vs z_e")
-        ax.legend()
-        
-        # codebook usage
-        ax = axarr[2]
-    
-        bins = np.linspace(-0.5, num_codes + 0.5, num_codes + 1)
-        ax.hist(idx_concat, bins=bins)
-        ax.set_yscale("log")
-        ax.set_title("Codebook usage")
-
-    # ---------------------------------------
-    # NEW: MULTI-EVENT ENERGY RESOLUTION
-    # ---------------------------------------
-    E_true_all, E_reco_all = {}, {}  # NEW
-
-    for key in batch.keys():  # NEW
-        flat_true = batch[key]["flat_tensor"].detach().cpu().numpy()
-        flat_reco = patches_chunked_reco[key].detach().cpu().numpy()
-
-        E_true = flat_true.sum(axis=2)
-        E_reco = flat_reco.sum(axis=2)
-
-        E_true_all[key] = np.nan_to_num(E_true.reshape(-1))
-        E_reco_all[key] = np.nan_to_num(E_reco.reshape(-1))
-
- 
-
-    
-
-    ax = axarr[3]  # NEW
-    for key in E_true_all.keys():
-        mask_nonzero = E_true_all[key] > 0
-        resolution = (E_reco_all[key][mask_nonzero] - E_true_all[key][mask_nonzero]) / E_true_all[key][mask_nonzero]
-        ax.hist(resolution, bins=100, histtype="step", linewidth=2, label=str(key))
-    plt.legend()
-    ax.set_xlabel(r"$(E_{reco} - E_{true}) / E_{true}$")
-    ax.set_ylabel("Counts")
-    ax.set_yscale("log")
-    ax.set_title("Energy resolution (per patch)")
-
-    for ax in axarr.flatten():
-        if is_axes_empty(ax):
-            ax.set_visible(False)
-
-    fig.tight_layout()
-    plt.show()
-
-    if saveas is not None:
-        fig.savefig(saveas+"_multi_event_figures.png")
-
-    # -----------------------------
-    # SINGLE EVENT (UPDATED)
-    # -----------------------------
-
-    r_all, phi_all, z_all, x_all, y_all = [], [], [], [], []
-    E_true_all, E_reco_all = [], []
-
-    # ✅ NEW: store per-group resolution
-    resolution_per_group = {}  # NEW
+    # ------------------------------------------------------------------ #
+    # Multi-event energy data, split by region and by ring
+    # ------------------------------------------------------------------ #
+    region_E_true   = defaultdict(list)
+    region_E_reco   = defaultdict(list)
+    # region_ring_res[region][ring_idx] = list of (E_r-E_t)/E_t values
+    region_ring_res = defaultdict(lambda: defaultdict(list))
 
     for key in batch.keys():
-        local_ids = batch[key]["patch_positions"][0].detach().cpu().numpy()
-        flat_true = batch[key]["flat_tensor"][0].detach().cpu().numpy()
-        flat_reco = patches_chunked_reco[key][0].detach().cpu().numpy()
+        region   = _region_from_key(key)
+        ring_idx = _ring_from_key(key)
+        ft = batch[key]["flat_tensor"].detach().cpu().numpy()     # (B, P_k, C)
+        fr = patches_chunked_reco[key].detach().cpu().numpy()
+        mk = batch[key]["mask"].detach().cpu().numpy()            # (B, P_k)
 
-        E_true = np.nan_to_num(flat_true.sum(axis=1))
-        E_reco = np.nan_to_num(flat_reco.sum(axis=1))
+        E_t = ft.sum(axis=2)
+        E_r = fr.sum(axis=2)
+        for b in range(B):
+            m  = mk[b] > 0
+            et = E_t[b][m];  er = E_r[b][m]
+            region_E_true[region].extend(et.tolist())
+            region_E_reco[region].extend(er.tolist())
+            nz = et > 0
+            if nz.any():
+                region_ring_res[region][ring_idx].extend(
+                    ((er[nz] - et[nz]) / et[nz]).tolist()
+                )
 
-        # store for global scatter
-        x_all.append(local_ids[:, 0]*np.cos(local_ids[:, 1]))
-        y_all.append(local_ids[:, 0]*np.sin(local_ids[:, 1]))
-        z_all.append(local_ids[:, 2])
-        r_all.append(local_ids[:, 0])
-        phi_all.append(local_ids[:, 1])
-        E_true_all.append(E_true)
-        E_reco_all.append(E_reco)
+    region_E_true = {k: np.array(v) for k, v in region_E_true.items()}
+    region_E_reco = {k: np.array(v) for k, v in region_E_reco.items()}
 
-        # ---------------------------------------
-        # NEW: per-group resolution (NOT aggregated)
-        # ---------------------------------------
-        
-        mask_nonzero = E_true > 0
-        res = (E_reco[mask_nonzero] - E_true[mask_nonzero]) / E_true[mask_nonzero]
-        resolution_per_group[str(key)] = res  # NEW
+    # Split latent vectors and codebook indices by region
+    if vq_out is not None:
+        region_z_q   = defaultdict(list)
+        region_z_e   = defaultdict(list)
+        region_codes = defaultdict(list)
 
-    r = np.concatenate(r_all)
-    phi = np.concatenate(phi_all)
-    z = np.concatenate(z_all)
-    x = np.concatenate(x_all)
-    y = np.concatenate(y_all)
-    E_true = np.concatenate(E_true_all)
-    E_reco = np.concatenate(E_reco_all)
+        for b in range(B):
+            # model argsorts patches by ascending global_patch_id before the transformer
+            all_gids = []
+            for key in batch.keys():
+                all_gids.extend(batch[key]["global_patch_ids"][b].cpu().numpy().tolist())
+            all_gids   = np.array(all_gids)
+            sort_order = np.argsort(all_gids)
 
-    eps = 1e-8
-    rel_err = (E_reco - E_true) / (E_true + eps)
+            for rank, orig_idx in enumerate(sort_order):
+                gid    = int(all_gids[orig_idx])
+                region = gid_region[b].get(gid, "unknown")
+                region_z_q[region].append(master_z_q[b][rank])
+                region_z_e[region].append(master_z_e[b][rank])
+                region_codes[region].append(int(master_idx[b][rank]))
 
-    # robust color scaling
-    vmax = np.percentile(np.abs(rel_err), 99)
-    vmin = -vmax
+        for r in list(region_z_q.keys()):
+            region_z_q[r]   = np.array(region_z_q[r])
+            region_z_e[r]   = np.array(region_z_e[r])
+            region_codes[r] = np.array(region_codes[r])
 
-    fig, axarr = plt.subplots(1, 4, figsize=(7*4, 6), constrained_layout=True)  # unchanged
+    # ------------------------------------------------------------------ #
+    # Single-event (event 0) spatial data, split by region
+    # ------------------------------------------------------------------ #
+    single = defaultdict(lambda: defaultdict(list))
 
-    def scatter_plot(ax, x, y, c, title, vmin, vmax):
-        sc = ax.scatter(
-            x, y,
-            c=c,
-            s=10,
-            cmap="coolwarm",
-            vmin=vmin,
-            vmax=vmax
-        )
-        ax.set_title(title)
-        #ax.set_aspect('equal', adjustable='box')  # ✅ FIX
-        return sc
+    for key in batch.keys():
+        region = _region_from_key(key)
+        pos = batch[key]["patch_positions"][0].detach().cpu().numpy()  # (P_k, 3): [r, phi, z]
+        ft  = batch[key]["flat_tensor"][0].detach().cpu().numpy()
+        fr  = patches_chunked_reco[key][0].detach().cpu().numpy()
+        mk  = batch[key]["mask"][0].detach().cpu().numpy()
 
+        m   = mk > 0
+        r_arr, phi_arr, z_arr = pos[m, 0], pos[m, 1], pos[m, 2]
+        E_t = ft[m].sum(axis=1)
+        E_r = fr[m].sum(axis=1)
+        res = (E_r - E_t) / (E_t + 1e-8)
 
-    # -------------------------
-    # r-phi
-    # -------------------------
-    sc0 = scatter_plot(axarr[0], x, y, rel_err, " (Reco - True)/True : r-phi", vmin, vmax)
-    axarr[0].set_xlabel("x")
-    axarr[0].set_ylabel("y")
+        single[region]["r"].extend(r_arr.tolist())
+        single[region]["phi"].extend(phi_arr.tolist())
+        single[region]["z"].extend(z_arr.tolist())
+        single[region]["x"].extend((r_arr * np.cos(phi_arr)).tolist())
+        single[region]["y"].extend((r_arr * np.sin(phi_arr)).tolist())
+        single[region]["E_true"].extend(E_t.tolist())
+        single[region]["E_reco"].extend(E_r.tolist())
+        single[region]["res"].extend(res.tolist())
 
-    # -------------------------
-    # z-phi
-    # -------------------------
-    sc1 = scatter_plot(axarr[1], z, phi, rel_err, " (Reco - True)/True : z-phi", vmin, vmax)
-    axarr[1].set_xlabel("z")
-    axarr[1].set_ylabel("phi")
+    # Attach codebook index per patch for the single event
+    if vq_out is not None:
+        all_gids_ev0 = []
+        for key in batch.keys():
+            all_gids_ev0.extend(
+                batch[key]["global_patch_ids"][0].cpu().numpy().tolist()
+            )
+        all_gids_ev0 = np.array(all_gids_ev0)
+        sort_ev0     = np.argsort(all_gids_ev0)
+        gid_to_code  = {int(all_gids_ev0[orig]): int(master_idx[0][rank])
+                        for rank, orig in enumerate(sort_ev0)}
+        for key in batch.keys():
+            region = _region_from_key(key)
+            gids   = batch[key]["global_patch_ids"][0].cpu().numpy()
+            mk     = batch[key]["mask"][0].cpu().numpy()
+            single[region]["codes"].extend(
+                [gid_to_code[int(g)] for g in gids[mk > 0]]
+            )
 
-    # -------------------------
-    # r-z
-    # -------------------------
-    sc2 = scatter_plot(axarr[2], r, z, rel_err, " (Reco - True)/True : r-z", vmin, vmax)
-    axarr[2].set_xlabel("r")
-    axarr[2].set_ylabel("z")
+    for region in single:
+        for k in single[region]:
+            single[region][k] = np.array(single[region][k])
 
-    fig.colorbar(sc0, ax=axarr[0])
-    fig.colorbar(sc1, ax=axarr[1])
-    fig.colorbar(sc2, ax=axarr[2])
+    # shared residual colour scale (99th-percentile robust)
+    all_res = np.concatenate(
+        [single[r]["res"] for r in single if len(single[r].get("res", [])) > 0]
+    )
+    vmax_res = float(np.percentile(np.abs(all_res), 99)) if len(all_res) else 1.0
+    vmin_res = -vmax_res
 
+    # ================================================================== #
+    # FIGURE 1 — Multi-event summary
+    # Panels: per-region ΔE/E hists | E_reco vs E_true log-log scatter |
+    #         per-ring violin plots | (if VQ) latent scatter × 2 + codebook usage
+    # ================================================================== #
+    n_rows = 2 if vq_out is not None else 1
+    fig1, axarr1 = plt.subplots(n_rows, 3, figsize=(21, 7 * n_rows))
+    if n_rows == 1:
+        axarr1 = axarr1.reshape(1, 3)
 
-    ax = axarr[3] # NEW 
-    for key, res in resolution_per_group.items(): 
-        ax.hist(res, bins=50, histtype="step", linewidth=1.5, label=str(key)) # NEW 
-        ax.set_xlabel(r"$(E_{reco} - E_{true}) / E_{true}$") 
-        ax.set_ylabel("Counts") 
-        ax.set_yscale("log") 
-        ax.set_title("Resolution per patch group") 
-        ax.legend(fontsize=6) # NEW
+    # [0,0] Per-region ΔE/E histograms (all batch events)
+    ax = axarr1[0, 0]
+    for region in ["barrel", "endcap_pos", "endcap_neg"]:
+        et = region_E_true.get(region, np.array([]))
+        er = region_E_reco.get(region, np.array([]))
+        nz = et > 0
+        if nz.any():
+            res = (er[nz] - et[nz]) / et[nz]
+            ax.hist(res, bins=100, histtype="step", linewidth=2,
+                    color=_REGION_COLORS[region], label=_REGION_LABELS[region], density=True)
+    ax.set_xlabel(r"$(E_{reco} - E_{true}) / E_{true}$")
+    ax.set_ylabel("Density"); ax.set_yscale("log")
+    ax.set_title("Per-region energy resolution"); ax.legend()
 
+    # [0,1] E_reco vs E_true log-log scatter (up to 500 pts per region)
+    ax = axarr1[0, 1]
+    for region in ["barrel", "endcap_pos", "endcap_neg"]:
+        et = region_E_true.get(region, np.array([]))
+        er = region_E_reco.get(region, np.array([]))
+        valid = (et > 0) & (er > 0)
+        if valid.any():
+            idx = np.random.choice(np.where(valid)[0],
+                                   size=min(500, valid.sum()), replace=False)
+            ax.scatter(et[idx], er[idx], s=8, alpha=0.4,
+                       color=_REGION_COLORS[region], label=_REGION_LABELS[region])
+    all_pos = np.concatenate([v[v > 0] for v in region_E_true.values() if (v > 0).any()] or [np.array([1])])
+    lims = [all_pos.min(), all_pos.max()]
+    ax.plot(lims, lims, "k--", lw=1, alpha=0.6, label="y = x")
+    ax.set_xscale("log"); ax.set_yscale("log")
+    ax.set_xlabel(r"$E_{true}$ [MeV]"); ax.set_ylabel(r"$E_{reco}$ [MeV]")
+    ax.set_title(r"$E_{reco}$ vs $E_{true}$ per patch"); ax.legend(markerscale=2, fontsize=8)
 
-    plt.show()
+    # [0,2] Per-ring ΔE/E violin plots, coloured by region
+    ax = axarr1[0, 2]
+    vdata, vlabels, vcolors = [], [], []
+    for region in ["barrel", "endcap_pos", "endcap_neg"]:
+        short = {"barrel": "B", "endcap_pos": "E+", "endcap_neg": "E−"}[region]
+        for ring_idx in sorted(region_ring_res.get(region, {}).keys()):
+            data = region_ring_res[region][ring_idx]
+            if len(data) > 1:
+                vdata.append(data); vlabels.append(f"{short}.{ring_idx}")
+                vcolors.append(_REGION_COLORS[region])
+    if vdata:
+        pos   = list(range(len(vdata)))
+        parts = ax.violinplot(vdata, positions=pos, showmedians=True, showextrema=False)
+        for i, pc in enumerate(parts["bodies"]):
+            pc.set_facecolor(vcolors[i]); pc.set_alpha(0.6)
+        parts["cmedians"].set_color("black")
+        ax.set_xticks(pos); ax.set_xticklabels(vlabels, fontsize=8)
+        ax.axhline(0, color="black", lw=0.8, linestyle="--")
+        ax.set_ylabel(r"$(E_{reco} - E_{true}) / E_{true}$")
+        ax.set_title("Resolution by ring")
+        ax.legend(handles=[Patch(facecolor=_REGION_COLORS[r], alpha=0.6,
+                                 label=_REGION_LABELS[r])
+                            for r in ["barrel", "endcap_pos", "endcap_neg"]
+                            if r in region_ring_res], fontsize=8)
 
+    # [1,0–1] Latent space z_q scatter coloured by region (VQ only)
+    if vq_out is not None:
+        for col, (d0, d1) in enumerate([(0, 1), (0, 2)]):
+            ax = axarr1[1, col]
+            for region in ["barrel", "endcap_pos", "endcap_neg"]:
+                if region not in region_z_q or len(region_z_q[region]) == 0:
+                    continue
+                zq     = region_z_q[region]
+                n_show = min(n_scatterpoints_to_plot, len(zq))
+                ax.scatter(zq[:n_show, d0], zq[:n_show, d1], s=12, alpha=0.4,
+                           color=_REGION_COLORS[region], label=_REGION_LABELS[region])
+            ax.set_xlabel(f"$z_{d0}$"); ax.set_ylabel(f"$z_{d1}$")
+            ax.set_title(f"Latent $z_q$ (dims {d0},{d1}) by region"); ax.legend(fontsize=8)
+
+        # [1,2] Codebook usage histogram, one curve per region
+        if num_codes is not None:
+            ax = axarr1[1, 2]
+            bins = np.arange(-0.5, num_codes + 0.5, 1)
+            for region in ["barrel", "endcap_pos", "endcap_neg"]:
+                if region in region_codes and len(region_codes[region]) > 0:
+                    ax.hist(region_codes[region], bins=bins, histtype="step", linewidth=2,
+                            color=_REGION_COLORS[region], label=_REGION_LABELS[region])
+            ax.set_yscale("log")
+            ax.set_xlabel("Codebook index"); ax.set_ylabel("Count")
+            ax.set_title("Codebook usage by region"); ax.legend(fontsize=8)
+
+    for ax in axarr1.flatten():
+        if _axes_empty(ax):
+            ax.set_visible(False)
+    fig1.tight_layout()
     if saveas is not None:
-        fig.savefig(saveas + "_single_event_figures.png")
-    plt.close()
+        fig1.savefig(saveas + "_multi_event.png", dpi=150, bbox_inches="tight")
+    plt.close(fig1)
+
+    # ================================================================== #
+    # FIGURE 2 — Single-event detector views
+    # Panels: full r-z | barrel x-y | endcap+z x-y | endcap-z x-y |
+    #         (if VQ) r-z coloured by codebook index
+    # ================================================================== #
+    n_panels = 5 if vq_out is not None else 4
+    fig2, axarr2 = plt.subplots(1, n_panels, figsize=(7 * n_panels, 7))
+
+    # [0] Full-detector r-z slice: barrel forms horizontal band, endcaps form vertical caps
+    ax = axarr2[0]
+    sc_rz = None
+    for region in ["barrel", "endcap_pos", "endcap_neg"]:
+        d  = single.get(region, {})
+        et = d.get("E_true", np.array([]))
+        nz = et > 0
+        if not nz.any():
+            continue
+        sizes = 10 + 50 * (et[nz] / et[nz].max()) ** 0.4   # size ∝ sqrt(E_true)
+        sc_rz = ax.scatter(d["z"][nz], d["r"][nz],
+                           c=d["res"][nz], s=sizes,
+                           cmap="coolwarm", vmin=vmin_res, vmax=vmax_res,
+                           alpha=0.75, edgecolors="none")
+    if sc_rz is not None:
+        fig2.colorbar(sc_rz, ax=ax, label=r"$(E_{reco}-E_{true})/E_{true}$")
+    ax.set_xlabel("$z$ [mm]"); ax.set_ylabel("$r$ [mm]")
+    ax.set_title("Full detector $r$–$z$\n(size ∝ $E_{true}$, colour = residual)")
+
+    # [1–3] Transverse x-y views — barrel and both endcap discs
+    for panel_idx, region in enumerate(["barrel", "endcap_pos", "endcap_neg"], start=1):
+        ax  = axarr2[panel_idx]
+        d   = single.get(region, {})
+        et  = d.get("E_true", np.array([]))
+        nz  = et > 0
+        if nz.any():
+            sc = ax.scatter(d["x"][nz], d["y"][nz], c=d["res"][nz], s=15,
+                            cmap="coolwarm", vmin=vmin_res, vmax=vmax_res, alpha=0.7)
+            fig2.colorbar(sc, ax=ax)
+        ax.set_xlabel("$x$ [mm]"); ax.set_ylabel("$y$ [mm]")
+        ax.set_title(f"{_REGION_LABELS[region]}: transverse ($x$–$y$)\ncolour = residual")
+        ax.set_aspect("equal")
+
+    # [4] r-z coloured by codebook index (VQ only): reveals geometry-aware codes
+    if vq_out is not None:
+        ax = axarr2[4]
+        all_z4, all_r4, all_c4 = [], [], []
+        for region in ["barrel", "endcap_pos", "endcap_neg"]:
+            d  = single.get(region, {})
+            et = d.get("E_true", np.array([]))
+            nz = et > 0
+            if "codes" in d and nz.any():
+                all_z4.extend(d["z"][nz].tolist())
+                all_r4.extend(d["r"][nz].tolist())
+                all_c4.extend(d["codes"][nz].tolist())
+        if all_z4:
+            sc4 = ax.scatter(all_z4, all_r4, c=all_c4, s=12, alpha=0.75,
+                             cmap="tab20", vmin=0, vmax=num_codes)
+            fig2.colorbar(sc4, ax=ax, label="Codebook index")
+        ax.set_xlabel("$z$ [mm]"); ax.set_ylabel("$r$ [mm]")
+        ax.set_title("$r$–$z$: codebook index")
+
+    for ax in axarr2.flatten():
+        if _axes_empty(ax):
+            ax.set_visible(False)
+    fig2.tight_layout()
+    if saveas is not None:
+        fig2.savefig(saveas + "_single_event.png", dpi=150, bbox_inches="tight")
+    plt.close(fig2)
+
+    # ================================================================== #
+    # FIGURE 3 — Patch interior (event 0)
+    # For each region: 2 noisiest (highest E_true) + 2 quietest (lower-half non-zero).
+    # Barrel patches → 2-D imshow of shape (n_phi_total, cpz).
+    # Endcap patches → 1-D bar chart (cpz=1, so no z-spread within patch).
+    # Each row: True | Reco | Reco − True
+    # ================================================================== #
+    N_NOISY, N_QUIET = 2, 2
+
+    # Gather all valid patches for event 0, keyed by region
+    raw_patches = defaultdict(list)
+    for key in batch.keys():
+        region   = _region_from_key(key)
+        ring_idx = _ring_from_key(key)
+        cpz      = cells_per_patch_z_barrel if region == "barrel" else cells_per_patch_z_endcap
+        ft = batch[key]["flat_tensor"][0].detach().cpu().numpy()
+        fr = patches_chunked_reco[key][0].detach().cpu().numpy()
+        mk = batch[key]["mask"][0].detach().cpu().numpy()
+        ps = batch[key]["patch_positions"][0].detach().cpu().numpy()
+        for i in range(ft.shape[0]):
+            if mk[i] > 0:
+                raw_patches[region].append({
+                    "flat_true": ft[i], "flat_reco": fr[i],
+                    "E_true": float(ft[i].sum()), "position": ps[i],
+                    "ring_idx": ring_idx, "cpz": cpz,
+                })
+
+    # Select noisy (highest energy) + quiet (from lower half of non-zero patches)
+    chosen_patches = {}
+    for region, patches in raw_patches.items():
+        sorted_p = sorted(patches, key=lambda p: p["E_true"], reverse=True)
+        nonzero  = [p for p in sorted_p if p["E_true"] > 0]
+        noisy    = nonzero[:N_NOISY]
+        lower    = nonzero[len(nonzero) // 2:]
+        if len(lower) >= N_QUIET:
+            idx   = np.round(np.linspace(0, len(lower) - 1, N_QUIET)).astype(int)
+            quiet = [lower[int(i)] for i in idx]
+        else:
+            quiet = lower[:N_QUIET]
+        for j, p in enumerate(noisy + quiet):
+            p["label"] = f"noisy {j + 1}" if j < N_NOISY else f"quiet {j - N_NOISY + 1}"
+        chosen_patches[region] = noisy + quiet
+
+    total_rows = sum(len(v) for v in chosen_patches.values())
+    if total_rows == 0:
+        return
+
+    fig3, axarr3 = plt.subplots(total_rows, 3, figsize=(15, 4 * total_rows), squeeze=False)
+
+    row = 0
+    for region in ["barrel", "endcap_pos", "endcap_neg"]:
+        if region not in chosen_patches:
+            continue
+        for patch in chosen_patches[region]:
+            ft   = patch["flat_true"]
+            fr   = patch["flat_reco"]
+            diff = fr - ft
+            cpz  = patch["cpz"]
+            pos  = patch["position"]
+            row_title = (
+                f"{_REGION_LABELS[region]} | Ring {patch['ring_idx']} | {patch['label']}\n"
+                f"r={pos[0]:.0f} mm, φ={pos[1]:.2f} rad, z={pos[2]:.0f} mm"
+                f" | $E_{{true}}$={patch['E_true']:.2f} MeV"
+            )
+
+            if cpz <= 1:
+                # Endcap: one z-disc per patch → 1-D bar chart over φ cells
+                x_idx = np.arange(len(ft))
+                for col, (data, sub) in enumerate([
+                    (ft, "True"), (fr, "Reco"), (diff, "Reco − True")
+                ]):
+                    ax = axarr3[row, col]
+                    if col < 2:
+                        ax.bar(x_idx, data, color=_REGION_COLORS[region], alpha=0.7)
+                    else:
+                        ax.bar(x_idx, data,
+                               color=["#d62728" if d > 0 else "#1f77b4" for d in data],
+                               alpha=0.7)
+                        ax.axhline(0, color="black", lw=0.6)
+                    ax.set_xlabel("φ cell index"); ax.set_ylabel("Energy [MeV]")
+                    ax.set_title(f"{row_title}\n{sub}" if col == 0 else sub, fontsize=7)
+            else:
+                # Barrel: 2-D heatmap of shape (n_phi_total, cpz)
+                # x-axis = z cell within patch, y-axis = stacked φ cells across all layers
+                img_t = _flat_to_2d(ft,   cpz)
+                img_r = _flat_to_2d(fr,   cpz)
+                img_d = _flat_to_2d(diff, cpz)
+                vmax_p   = max(img_t.max(), img_r.max(), 1e-9)
+                vmax_dif = max(np.abs(img_d).max(), 1e-9)
+                for col, (img, sub, cmap, vlo, vhi) in enumerate([
+                    (img_t, "True",        "hot", 0,       vmax_p),
+                    (img_r, "Reco",        "hot", 0,       vmax_p),
+                    (img_d, "Reco − True", "bwr", -vmax_dif, vmax_dif),
+                ]):
+                    ax = axarr3[row, col]
+                    im = ax.imshow(img, aspect="auto", cmap=cmap,
+                                   vmin=vlo, vmax=vhi,
+                                   interpolation="nearest", origin="lower")
+                    fig3.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                    ax.set_xlabel("$z$ cell index")
+                    ax.set_ylabel("φ cell (layers stacked)")
+                    ax.set_title(f"{row_title}\n{sub}" if col == 0 else sub, fontsize=7)
+            row += 1
+
+    fig3.tight_layout()
+    if saveas is not None:
+        fig3.savefig(saveas + "_patch_interior.png", dpi=150, bbox_inches="tight")
+    plt.close(fig3)
 
 
 
