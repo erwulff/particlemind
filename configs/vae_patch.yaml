@@ -7,6 +7,8 @@ trainer_kwargs:
   #limit_val_batches: 4500
 
 
+
+
 model_kwargs:
   model_type: "vae"
   latent_dim: 16
