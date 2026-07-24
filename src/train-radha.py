@@ -167,24 +167,44 @@ def main(args):
             with open(f"configs/detector_patching_params.yaml", "r") as file:
                 detector_patching_params = yaml.safe_load(file)[configs_data["system"]]
                 print_rank0(configs)
+
+
     
-            offsets = {}
+            offsets_barrel = {}
             for i in range(len(detector_patching_params["barrel_configs"]["cells_per_wedge"])):
-                offsets[i] = int((detector_patching_params["barrel_configs"]["cells_per_wedge"][i] - detector_patching_params["barrel_configs"]["cells_per_wedge"][0]) / 2)
-            
-            detector_patching_params["barrel_configs"]["offsets"] = offsets                    
-            patch_registry, unique_patch_sizes, NUM_TOTAL_PATCHES = build_patch_registry(detector_patching_params)
-        
+                offsets_barrel[i] = int((detector_patching_params["barrel_configs"]["cells_per_wedge"][i] - detector_patching_params["barrel_configs"]["cells_per_wedge"][0]) / 2)
+            detector_patching_params["barrel_configs"]["offsets"] = offsets_barrel 
+
+            offsets_endcap = {}
+            for i in range(len(detector_patching_params["endcap_configs"]["cells_per_wedge"])):
+                offsets_endcap[i] = int((detector_patching_params["endcap_configs"]["cells_per_wedge"][i] - detector_patching_params["endcap_configs"]["cells_per_wedge"][0]) / 2)
+            detector_patching_params["endcap_configs"]["offsets"] = offsets_endcap            
+
+
+            registry_barrel, unique_patch_sizes_barrel, num_patches_barrel = build_patch_registry(detector_patching_params)
+            print("Barrel registry built with unique patch sizes:", num_patches_barrel)
+            registry_endcap_pos, unique_patch_sizes_endcap_pos, num_patches_endcap_pos = build_patch_registry(detector_patching_params, side="positive")
+            print("Positive endcap registry built with unique patch sizes:", num_patches_endcap_pos)
+            registry_endcap_neg, unique_patch_sizes_endcap_neg, num_patches_endcap_neg = build_patch_registry(detector_patching_params, side="negative")
+            print("Negative endcap registry built with unique patch sizes:", num_patches_endcap_neg)
+                           
     
             vit_kwargs = configs_data["vit_kwargs"]
-            vit_kwargs["unique_patch_sizes_dict"] = unique_patch_sizes
-            vit_kwargs["NUM_TOTAL_PATCHES"] = NUM_TOTAL_PATCHES
+            vit_kwargs["unique_patch_sizes_barrel_dict"] = unique_patch_sizes_barrel
+            vit_kwargs["unique_patch_sizes_endcap_pos_dict"] = unique_patch_sizes_endcap_pos  # po and neg endcaps have the same unique patch sizes
+            #vit_kwargs["unique_patch_sizes_endcap_neg_dict"] = unique_patch_sizes_endcap_neg
+            vit_kwargs["NUM_TOTAL_PATCHES"] = num_patches_barrel + num_patches_endcap_pos + num_patches_endcap_neg
           
      
             # arguments for the positional encoding
-            vit_kwargs["n_bins_z"] = detector_patching_params["barrel_configs"]["n_bins_z"]
-            vit_kwargs["n_phi_patches"] = patch_registry["n_phi_patches"]
-            vit_kwargs["n_rings"] = patch_registry["n_rings"]
+            vit_kwargs["barrel_n_bins_z"] = detector_patching_params["barrel_configs"]["n_bins_z"]
+            vit_kwargs["barrel_n_phi_patches"] = registry_barrel["n_phi_patches"]
+            vit_kwargs["barrel_n_rings"] = registry_barrel["n_rings"]
+
+            vit_kwargs["endcap_pos_n_bins_z"] = detector_patching_params["endcap_configs"]["n_bins_z"]
+            vit_kwargs["endcap_pos_n_phi_patches"] = registry_endcap_pos["n_phi_patches"]
+            vit_kwargs["endcap_pos_n_rings"] = registry_endcap_pos["n_rings"]
+
             configs["model_kwargs"]["input_dim"] = configs_data["vit_kwargs"]["D_EMBEDDING"]
             
     
@@ -192,16 +212,20 @@ def main(args):
             train_dataset = CaloPatchDataset(
                 configs_data["subsets"],
                 "train",
-                patch_registry,
-                detector_patching_params,
+                patch_registry_barrel=registry_barrel,
+                patch_registry_endcap_pos=registry_endcap_pos,
+                patch_registry_endcap_neg=registry_endcap_neg,
+                detector_patching_params=detector_patching_params,
                 nsamples=int(configs_data["n_samples_total"]*configs_data["train_fraction"]),
                 train_fraction=configs_data["train_fraction"],
             )
             val_dataset = CaloPatchDataset(
                 configs_data["subsets"],
                 "val",
-                patch_registry,
-                detector_patching_params,
+                patch_registry_barrel=registry_barrel,
+                patch_registry_endcap_pos=registry_endcap_pos,
+                patch_registry_endcap_neg=registry_endcap_neg,
+                detector_patching_params=detector_patching_params,
                 nsamples=int(configs_data["n_samples_total"]*(1-configs_data["train_fraction"])),
                 train_fraction=configs_data["train_fraction"],
             )

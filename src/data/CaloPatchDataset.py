@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import IterableDataset
 import itertools
 import logging
-from src.data.patching import assign_hits_to_patches_barrel
+from src.data.patching import assign_hits_to_patches, assign_hits_to_patches
 
 
 
@@ -13,7 +13,10 @@ class CaloPatchDataset(IterableDataset):
         self,
         subset,
         split,
-        patch_registry,
+        detector_type,
+        patch_registry_barrel,
+        patch_registry_endcap_pos,
+        patch_registry_endcap_neg,
         detector_patching_params,
         nsamples=None,
         train_fraction=0.8,
@@ -28,7 +31,11 @@ class CaloPatchDataset(IterableDataset):
         self.start_idx = start_idx
         self.stop_idx = stop_idx
 
-        self.patch_registry = patch_registry
+        assert detector_type in ["ECAL", "HCAL"], "detector_type must be either 'ECAL' or 'HCAL'"
+        self.detector_type = detector_type
+        self.patch_registry_barrel = patch_registry_barrel
+        self.patch_registry_endcap_pos = patch_registry_endcap_pos
+        self.patch_registry_endcap_neg = patch_registry_endcap_neg
         self.detector_patching_params = detector_patching_params
 
 
@@ -112,16 +119,50 @@ class CaloPatchDataset(IterableDataset):
         
 
             hit_labels = np.array(event["detector"])
-            mask = hit_labels==13
 
-            output = assign_hits_to_patches_barrel(
-                x[mask],
-                y[mask],
-                z[mask],
-                energy[mask],
-                self.patch_registry,
+            if self.detector_type == "ECAL":
+                det_index_barrel = 10
+                det_index_pos_endcap = 11
+                det_index_neg_endcap = 9
+            elif self.detector_type == "HCAL":
+                det_index_barrel = 13
+                det_index_pos_endcap = 14
+                det_index_neg_endcap = 12
+
+
+
+
+            mask_barrel = hit_labels==det_index_barrel
+            output_barrel = assign_hits_to_patches(
+                x[mask_barrel],
+                y[mask_barrel],
+                z[mask_barrel],
+                energy[mask_barrel],
+                self.patch_registry_barrel,
                 self.detector_patching_params
             ) 
+
+            mask_endcap_pos = hit_labels==det_index_pos_endcap
+            output_endcap_pos = assign_hits_to_patches(
+                x[mask_endcap_pos],
+                y[mask_endcap_pos],
+                z[mask_endcap_pos],
+                energy[mask_endcap_pos],
+                self.patch_registry_endcap_pos,
+                self.detector_patching_params
+            )   
+
+            mask_endcap_neg = hit_labels==det_index_neg_endcap
+            output_endcap_neg = assign_hits_to_patches(
+                x[mask_endcap_neg],
+                y[mask_endcap_neg],
+                z[mask_endcap_neg],
+                energy[mask_endcap_neg],
+                self.patch_registry_endcap_neg,
+                self.detector_patching_params
+            )
+
+            # somehow combine the barrel, endcaps...
 
         
 
