@@ -10,6 +10,8 @@ E_min: 0.0000
 
 data_type: "hit"
 
+WANDB_CACHE_DIR: "/scratch/midway3/rmastand/wandb"
+
 
 # tokens
 tokens_dir: "/pscratch/sd/r/rmastand/particlemind/tokens/colliderML_parquetfiles"

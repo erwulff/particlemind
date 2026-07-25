@@ -36,10 +36,7 @@ from src.data.utils import CollaterPatch, CollaterHits
 from src.models.backbone import BackboneNextTokenPredictionLightning
 
 from src.data.CaloHitDatasetCAL import CaloHitDatasetDouble as CaloHitDataset
-#from src.models.vqvae_double import VQVAELightningDouble as VQVAELightning
-from src.models.vqvae import VQVAELightningSingle as VQVAELightning
 
-#from src.models.vqvae_double import VQVAELightning
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
@@ -94,7 +91,7 @@ def main(args):
 
         seed_everything(0)
         os.environ["CUDA_VISIBLE_DEVICES"] = configs["trainer_kwargs"]["visible_devices"]
-        os.environ["WANDB_CACHE_DIR"] = "/pscratch/sd/r/rmastand/"
+        os.environ["WANDB_CACHE_DIR"] = configs_data["WANDB_CACHE_DIR"]
     
         #torch.set_float32_matmul_precision("medium")
 
@@ -163,6 +160,9 @@ def main(args):
         assert configs_data["data_type"] in ["patch", "hit"]
 
         if configs_data["data_type"] == "patch":
+
+            from src.models.vqvae import VQVAELightningSingle as VQVAELightning
+
     
             # build the patch registry
             with open(f"configs/detector_patching_params.yaml", "r") as file:
@@ -186,7 +186,7 @@ def main(args):
             print("Barrel registry built with unique patch sizes:", num_patches_barrel)
             registry_endcap_pos, unique_patch_sizes_endcap_pos, num_patches_endcap_pos = build_patch_registry(detector_patching_params, side="positive")
             print("Positive endcap registry built with unique patch sizes:", num_patches_endcap_pos)
-            registry_endcap_neg, unique_patch_sizes_endcap_neg, num_patches_endcap_neg = build_patch_registry(detector_patching_params, side="negative")
+            registry_endcap_neg, _, num_patches_endcap_neg = build_patch_registry(detector_patching_params, side="negative")
             print("Negative endcap registry built with unique patch sizes:", num_patches_endcap_neg)
                            
             print("Total unique patch sizes:", num_patches_barrel + num_patches_endcap_pos + num_patches_endcap_neg)
@@ -198,13 +198,13 @@ def main(args):
             # "barrel_(0, 0)", "endcap_pos_(0, 0)".  This mirrors how CaloPatchDataset
             # names its output keys, and is what VQVAENormFormer uses to build its
             # per-patch-shape linear encoders.
+            # endcap_neg shares projection weights with endcap_pos (mirror symmetry),
+            # so we omit endcap_neg keys here — no modules are created for them.
             combined_patch_sizes = {}
             for k, v in unique_patch_sizes_barrel.items():
                 combined_patch_sizes[f"barrel_{k}"] = v
             for k, v in unique_patch_sizes_endcap_pos.items():
                 combined_patch_sizes[f"endcap_pos_{k}"] = v
-            for k, v in unique_patch_sizes_endcap_neg.items():
-                combined_patch_sizes[f"endcap_neg_{k}"] = v
             vit_kwargs["unique_patch_sizes_dict"] = combined_patch_sizes
 
             # Positional encoding dimensions.  Ring and z indices are offset per
@@ -243,6 +243,8 @@ def main(args):
             collate_func = CollaterPatch()
 
         elif configs_data["data_type"] == "hit":
+
+            from src.models.vqvae_double import VQVAELightningDouble as VQVAELightning
 
             # DATA
             train_dataset = CaloHitDataset(
@@ -431,7 +433,7 @@ if __name__ == "__main__":
     # parser.add_argument("--gpu_id", type=str, default="0")
 
     parser.add_argument(
-        "--save_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/"
+        "--save_dir", type=str, default="/scratch/midway3/rmastand/particlemind/"
     )
     parser.add_argument("--name", type=str, default="test")
     parser.add_argument(

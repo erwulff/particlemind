@@ -12,7 +12,7 @@ trainer_kwargs:
 model_kwargs:
   model_type: "vae"
   latent_dim: 16
-  hidden_dim: 128
+  hidden_dim: 4
   num_heads: 2
   num_blocks: 2
   alpha: 5

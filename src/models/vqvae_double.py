@@ -322,7 +322,7 @@ class VQVAELightningDouble(L.LightningModule):
             curr_epoch, curr_step = self.trainer.current_epoch, self.trainer.global_step
 
             plot_dir = Path(self.trainer.default_root_dir + f"/plots/{self.plot_dir_name}/")
-            plot_dir.mkdir(exist_ok=True)
+            plot_dir.mkdir(parents=True, exist_ok=True)
             plot_filename = f"{plot_dir}/epoch{curr_epoch}_gstep{curr_step}"
 
             if self.data_type == "patch":

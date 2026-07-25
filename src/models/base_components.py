@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from src.models.positional_encoding import DetectorPosEnc
+import torch.nn.functional as F
 
 def safe(x):
     if torch.is_tensor(x):
@@ -335,11 +336,10 @@ class VQVAENormFormer(torch.nn.Module):
             keys = list(sorted(batch.keys()))
         
             # 1. encode each patch group
+            # endcap_neg shares projection weights with endcap_pos (mirror symmetry).
             for key in keys:
-
-
-           
-                emb = self.linear_projection_encoders[str(key)](batch[key]["flat_tensor"])  # (B, P_k, D) P_k = num. patches per key. should have sum P_k = P
+                encoder_key = key.replace("endcap_neg_", "endcap_pos_")
+                emb = self.linear_projection_encoders[str(encoder_key)](batch[key]["flat_tensor"])  # (B, P_k, D)
 
 
 
@@ -396,8 +396,8 @@ class VQVAENormFormer(torch.nn.Module):
             start = 0
             for key, P_k in zip(keys, patch_group_sizes):
                 chunk = e_reco_unordered[:, start:start + P_k, :]      # (B, P_k, D)
-                # transpose of the encoder
-                W = self.linear_projection_encoders[str(key)].weight  # (D, bins_k)
+                encoder_key = key.replace("endcap_neg_", "endcap_pos_")
+                W = self.linear_projection_encoders[str(encoder_key)].weight  # (D, bins_k)
                 x_reco_chunks[key] = F.linear(chunk, W.T)  # (B, P_k, bins_k)
                 start += P_k
     

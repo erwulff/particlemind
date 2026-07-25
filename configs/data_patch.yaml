@@ -10,7 +10,9 @@ system: "HCAL"
 data_type: "patch"
 
 vit_kwargs:
-  D_EMBEDDING: 1024
+  D_EMBEDDING: 32
+
+WANDB_CACHE_DIR: "/scratch/midway3/rmastand/wandb"
 
 
 # tokens
