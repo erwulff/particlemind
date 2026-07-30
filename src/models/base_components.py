@@ -3,6 +3,13 @@ import torch.nn as nn
 from src.models.positional_encoding import DetectorPosEnc
 import torch.nn.functional as F
 
+# vqtorch can be installed from https://github.com/minyoungg/vqtorch
+try:
+    from vqtorch.nn import VectorQuant  # type: ignore
+except ImportError as e:
+    raise ImportError("vqtorch is not installed. Please install it to use this module.") from e
+
+
 def safe(x):
     if torch.is_tensor(x):
         x = torch.nan_to_num(x, nan=0.0, posinf=1e6, neginf=-1e6)
@@ -326,6 +333,17 @@ class VQVAENormFormer(torch.nn.Module):
                 x_reco_chunks
                 vq_out
             """
+
+            # print out the number of zero patches per event
+            # for key in batch.keys():
+            #     mask = batch[key]['mask']  # (B, P_k)
+            #     zero_per_event = (mask == 1).sum(dim=1)  # (B,)
+            #     total_patches = mask.shape[1]
+            #     print(f"Key: {key}")
+            #     print(f"  nonzero patches per event: {zero_per_event.tolist()}")
+            #     print(f"  total patches per event: {total_patches}")
+            #     print()
+
     
             embeddings = []
             global_patch_ids = []
@@ -378,10 +396,34 @@ class VQVAENormFormer(torch.nn.Module):
             z_embed = self.latent_projection_in(e) * patch_mask.unsqueeze(-1)
     
             if self.vq_kwargs is not None:
-                z, vq_out = self.vqlayer(z_embed)
+                B_vq, P_vq, D_vq = z_embed.shape
+                flat_mask = patch_mask.reshape(B_vq * P_vq).bool()   # (B*P,)
+                z_flat    = z_embed.reshape(B_vq * P_vq, D_vq)       # (B*P, D)
+
+                # Run VQ only on non-zero-energy patches so masked positions
+                # don't contaminate codebook assignments or the commitment loss.
+                valid_z_q, vq_out = self.vqlayer(z_flat[flat_mask].unsqueeze(0))  # (1, K, D)
+                valid_z_q = valid_z_q.squeeze(0)                                   # (K, D)
+
+                # Scatter quantized results back to full (B, P, D) shape.
+                z_flat_q = torch.zeros_like(z_flat)
+                z_flat_q[flat_mask] = valid_z_q
+                z = z_flat_q.reshape(B_vq, P_vq, D_vq)
+
+                # Rebuild vq_out tensors from (1, K, ...) → (B, P, ...) so that
+                # downstream code indexing [b][rank] keeps working.
+                for out_key in ["q", "z", "z_q"]:
+                    if out_key not in vq_out or not torch.is_tensor(vq_out[out_key]):
+                        continue
+                    val = vq_out[out_key].squeeze(0)          # (K, *trailing)
+                    trailing = val.shape[1:]
+                    full = torch.zeros(B_vq * P_vq, *trailing, dtype=val.dtype, device=val.device)
+                    full[flat_mask] = val
+                    vq_out[out_key] = full.reshape(B_vq, P_vq, *trailing)
+               
             else:
                 z, vq_out = z_embed, None
-    
+
             e_reco  = self.latent_projection_out(z) * patch_mask.unsqueeze(-1)
             e_reco  = self.decoder_normformer(e_reco, mask=patch_mask)
             e_reco  = self.output_projection(e_reco) * patch_mask.unsqueeze(-1)

@@ -433,6 +433,10 @@ def plot_model_patch(
         master_idx = vq_out["q"].detach().cpu().numpy()
         if master_idx.ndim == 3:
             master_idx = master_idx.squeeze(2)
+        if master_z_q.ndim == 4:
+            master_z_q = master_z_q.squeeze(2)
+        if master_z_e.ndim == 4:
+            master_z_e = master_z_e.squeeze(2)
 
     B = next(iter(batch.values()))["flat_tensor"].shape[0]
 

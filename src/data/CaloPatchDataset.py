@@ -193,8 +193,8 @@ class CaloPatchDataset(IterableDataset):
             output = {}
             for region_tag, region_out, gid_off, r_off, z_off in [
                 ("barrel",     output_barrel,     0,                                         0,                   0),
-                ("endcap_pos", output_endcap_pos, self._n_barrel,                            self._r_off_endcap_pos, self._z_off_endcap_pos),
-                ("endcap_neg", output_endcap_neg, self._n_barrel + self._n_endcap_pos,       self._r_off_endcap_neg, self._z_off_endcap_neg),
+                # ("endcap_pos", output_endcap_pos, self._n_barrel,                            self._r_off_endcap_pos, self._z_off_endcap_pos),
+                # ("endcap_neg", output_endcap_neg, self._n_barrel + self._n_endcap_pos,       self._r_off_endcap_neg, self._z_off_endcap_neg),
             ]:
                 for k, v in region_out.items():
                     local_ids = v["local_patch_ids"].copy()

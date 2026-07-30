@@ -28,11 +28,6 @@ from src.models.base_components import VQVAEMLP, VQVAENormFormer, reco_loss_func
 
 from src.models.contrastive_losses import CLIP_loss
 
-# vqtorch can be installed from https://github.com/minyoungg/vqtorch
-# try:
-#     from vqtorch.nn import VectorQuant  # type: ignore
-# except ImportError as e:
-#     raise ImportError("vqtorch is not installed. Please install it to use this module.") from e
 
 from src.utils.arrays import (
     ak_pad,

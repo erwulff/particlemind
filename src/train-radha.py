@@ -183,13 +183,14 @@ def main(args):
 
 
             registry_barrel, unique_patch_sizes_barrel, num_patches_barrel = build_patch_registry(detector_patching_params)
-            print("Barrel registry built with unique patch sizes:", num_patches_barrel)
+            print("Barrel registry built with total patches:", num_patches_barrel, "| unique patch sizes:", len(unique_patch_sizes_barrel))
             registry_endcap_pos, unique_patch_sizes_endcap_pos, num_patches_endcap_pos = build_patch_registry(detector_patching_params, side="positive")
-            print("Positive endcap registry built with unique patch sizes:", num_patches_endcap_pos)
-            registry_endcap_neg, _, num_patches_endcap_neg = build_patch_registry(detector_patching_params, side="negative")
-            print("Negative endcap registry built with unique patch sizes:", num_patches_endcap_neg)
-                           
-            print("Total unique patch sizes:", num_patches_barrel + num_patches_endcap_pos + num_patches_endcap_neg)
+            print("Positive endcap registry built with total patches:", num_patches_endcap_pos, "| unique patch sizes:", len(unique_patch_sizes_endcap_pos))
+            registry_endcap_neg, unique_patch_sizes_endcap_neg, num_patches_endcap_neg = build_patch_registry(detector_patching_params, side="negative")
+            print("Negative endcap registry built with total patches:", num_patches_endcap_neg, "| unique patch sizes:", len(unique_patch_sizes_endcap_neg))
+
+            print("Total patches:", num_patches_barrel + num_patches_endcap_pos + num_patches_endcap_neg,
+                  "| Total unique patch sizes:", len(unique_patch_sizes_barrel) + len(unique_patch_sizes_endcap_pos))
             print()
             vit_kwargs = configs_data["vit_kwargs"]
             vit_kwargs["NUM_TOTAL_PATCHES"] = num_patches_barrel + num_patches_endcap_pos + num_patches_endcap_neg
