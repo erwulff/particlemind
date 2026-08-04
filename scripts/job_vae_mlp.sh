@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --account=pi-rmastand  
+#SBATCH --account=pi-dfreedman 
 #SBATCH --job-name=vae-mlp
-#SBATCH --partition=gpu   
+#SBATCH --partition=gpu
+#SBATCH --constraint=a100
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
-#SBATCH --mem=64G
 #SBATCH --time=36:00:00
-#SBATCH --array=0-2
+#SBATCH --array=0
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=rmastand@rcc.uchicago.edu  # Where to send email
 
@@ -15,6 +15,7 @@
 # -----------------------------
 source /scratch/midway3/rmastand/particlemind_env/bin/activate 
 cd /home/rmastand/particlemind
+export HF_TOKEN=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
 export PYTHONPATH=/home/rmastand/particlemind:$PYTHONPATH
 
 commands=(

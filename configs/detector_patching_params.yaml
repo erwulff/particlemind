@@ -15,7 +15,7 @@ HCAL:
     z_start_midpoint: 3647.5
     z_stop_midpoint: 5432.5
 
-    cells_per_patch_z: 1  # each z-disc layer is its own z-patch (layers are far apart)
+    cells_per_patch_z: 9  # each z-disc layer is its own z-patch (layers are far apart)
 
     cells_per_wedge:
       0: 5
@@ -120,7 +120,7 @@ HCAL:
       99: 45
       100: 45
 
-    groups: [0, 40, 101]
+    groups: [0, 25, 50, 75, 101]
 
 
   barrel_configs:
@@ -174,7 +174,7 @@ HCAL:
       34: 45
       35: 45
 
-    cells_per_patch_z: 11
+    cells_per_patch_z: 21
 
     groups: [0, 18, 36]
 
