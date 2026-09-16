@@ -93,7 +93,7 @@ def main(args):
         os.environ["CUDA_VISIBLE_DEVICES"] = configs["trainer_kwargs"]["visible_devices"]
         os.environ["WANDB_CACHE_DIR"] = configs_data["WANDB_CACHE_DIR"]
     
-        #torch.set_float32_matmul_precision("medium")
+        torch.set_float32_matmul_precision("medium")
 
         if args.logger == "wandb":
             logger = WandbLogger(
@@ -139,7 +139,7 @@ def main(args):
             accelerator="cuda",
             strategy="ddp_find_unused_parameters_true",
             accumulate_grad_batches=configs["trainer_kwargs"]["accumulate_grad_batches"],
-            deterministic=True,
+            #deterministic=True,
             enable_model_summary=True,
             log_every_n_steps=1,
             max_epochs=configs["trainer_kwargs"]["max_epochs"],
@@ -193,7 +193,8 @@ def main(args):
                   "| Total unique patch sizes:", len(unique_patch_sizes_barrel) + len(unique_patch_sizes_endcap_pos))
             print()
             vit_kwargs = configs_data["vit_kwargs"]
-            vit_kwargs["NUM_TOTAL_PATCHES"] = num_patches_barrel + num_patches_endcap_pos + num_patches_endcap_neg
+            #vit_kwargs["NUM_TOTAL_PATCHES"] = num_patches_barrel + num_patches_endcap_pos + num_patches_endcap_neg
+            vit_kwargs["NUM_TOTAL_PATCHES"] = num_patches_barrel
 
             # Combined patch-size dict keyed by region-prefixed strings, e.g.
             # "barrel_(0, 0)", "endcap_pos_(0, 0)".  This mirrors how CaloPatchDataset
@@ -204,15 +205,19 @@ def main(args):
             combined_patch_sizes = {}
             for k, v in unique_patch_sizes_barrel.items():
                 combined_patch_sizes[f"barrel_{k}"] = v
-            for k, v in unique_patch_sizes_endcap_pos.items():
-                combined_patch_sizes[f"endcap_pos_{k}"] = v
+            # for k, v in unique_patch_sizes_endcap_pos.items():
+            #     combined_patch_sizes[f"endcap_pos_{k}"] = v
             vit_kwargs["unique_patch_sizes_dict"] = combined_patch_sizes
 
             # Positional encoding dimensions.  Ring and z indices are offset per
             # region in CaloPatchDataset so the embedding tables see unique indices.
-            vit_kwargs["n_rings"]      = registry_barrel["n_rings"] + 2 * registry_endcap_pos["n_rings"]
+            # vit_kwargs["n_rings"]      = registry_barrel["n_rings"] + 2 * registry_endcap_pos["n_rings"]
+            # vit_kwargs["n_phi_patches"] = registry_barrel["n_phi_patches"]  # 64 for all regions
+            # vit_kwargs["n_bins_z"]     = registry_barrel["n_z_patches"] + 2 * registry_endcap_pos["n_z_patches"]
+
+            vit_kwargs["n_rings"]      = registry_barrel["n_rings"] 
             vit_kwargs["n_phi_patches"] = registry_barrel["n_phi_patches"]  # 64 for all regions
-            vit_kwargs["n_bins_z"]     = registry_barrel["n_z_patches"] + 2 * registry_endcap_pos["n_z_patches"]
+            vit_kwargs["n_bins_z"]     = registry_barrel["n_z_patches"]
 
             configs["model_kwargs"]["input_dim"] = configs_data["vit_kwargs"]["D_EMBEDDING"]
             
@@ -434,7 +439,7 @@ if __name__ == "__main__":
     # parser.add_argument("--gpu_id", type=str, default="0")
 
     parser.add_argument(
-        "--save_dir", type=str, default="/scratch/midway3/rmastand/particlemind/"
+        "--save_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/"
     )
     parser.add_argument("--name", type=str, default="test")
     parser.add_argument(

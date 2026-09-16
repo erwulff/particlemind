@@ -25,12 +25,9 @@ class CollaterPatch:
         for inp in inputs:
             for key, obj in inp.items():
 
-                #tmp =  np.log( * 1e2) / 10
-                
-
-                grouped[key]["flat_tensor"].append(
-                    torch.as_tensor(obj["flat_tensor"], dtype=torch.float32)
-                )
+                flat = torch.as_tensor(obj["flat_tensor"], dtype=torch.float32)
+                flat = torch.log1p(flat * 1e5) / 10.0  # map [0, ~0.1 MeV] → [0, ~0.7], zeros stay zero
+                grouped[key]["flat_tensor"].append(flat)
                 grouped[key]["global_patch_ids"].append(
                     torch.as_tensor(obj["global_patch_ids"], dtype=torch.long)
                 )

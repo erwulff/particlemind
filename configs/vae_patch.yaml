@@ -1,7 +1,7 @@
 trainer_kwargs:
   visible_devices: "0"
-  accumulate_grad_batches: 128
-  max_epochs: 5
+  accumulate_grad_batches: 16
+  max_epochs: 6
   precision: 16-mixed
   #limit_train_batches: 18000
   #limit_val_batches: 4500

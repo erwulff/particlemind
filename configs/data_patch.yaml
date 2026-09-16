@@ -2,9 +2,9 @@
 
 subsets: ["ttbar_pu0_calo_hits"]
 train_fraction: 0.8
-batch_size_per_gpu: 4
-n_samples_total: 44444
-num_workers: 0
+batch_size_per_gpu: 32
+n_samples_total: 10000
+num_workers: 2
 
 system: "HCAL"
 data_type: "patch"

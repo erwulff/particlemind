@@ -216,15 +216,20 @@ class VQVAELightningSingle(L.LightningModule):
             embedding_hit, embedding_hit_reco, patches_chunked, patches_chunked_reco, vq_out = self.model(batch, None, None) # x, mask not used
             
             
-            losses = []
+            # Accumulate over all patch shapes before dividing, so every occupied
+            # cell carries the same weight regardless of which shape group it is
+            # in.  Averaging the per-group losses instead would let a group
+            # holding a handful of patches count as much as one holding hundreds.
+            num, den = 0.0, 0.0
             for key in patches_chunked.keys():
 
                 mask = batch[key]["mask"].unsqueeze(-1)
-                if mask.sum() > 0:
-                    diff = (patches_chunked[key] - patches_chunked_reco[key]) ** 2
-                    losses.append((diff * mask).sum() / mask.sum())
+                diff = (patches_chunked[key] - patches_chunked_reco[key]) ** 2
+                cell_weight = 1.0 + patches_chunked[key]  # upweight high-energy cells
+                num = num + (diff * cell_weight * mask).sum()
+                den = den + (cell_weight * mask).sum()
 
-            reco_loss = torch.stack(losses).mean()
+            reco_loss = num / den.clamp(min=1e-8)
 
             loss = reco_loss
 
@@ -234,6 +239,14 @@ class VQVAELightningSingle(L.LightningModule):
                 cmt_loss = vq_out["loss"]
                 loss += alpha * cmt_loss
                 loss_dict["cmt_loss"] = cmt_loss
+
+            n_nonzero = torch.stack(
+                [batch[key]["mask"].sum(dim=1) for key in batch.keys()]
+            ).sum(dim=0)  # (B,) occupied patches per event
+            n_total = sum(batch[key]["mask"].shape[1] for key in batch.keys())
+            loss_dict["n_nonzero_patches"] = n_nonzero.mean()
+            loss_dict["n_nonzero_patches_max"] = n_nonzero.max()
+            loss_dict["frac_nonzero_patches"] = n_nonzero.mean() / n_total
 
             loss_dict["total_loss"] = loss
                 
@@ -359,61 +372,133 @@ class VQVAELightningSingle(L.LightningModule):
         self.log("test_loss", loss.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
 
     def tokenize_dataloader(self, dataloader, hide_pbar=False, pad_length=15000, add_start_end_tokens=False):
-        """Tokenize a dataloader of calo hit events.
+        """Tokenize a dataloader of events into flat token sequences.
+
+        For data_type "hit", each event becomes its per-hit codebook indices,
+        keeping only the real (unpadded) hits.
+
+        For data_type "patch", only patches with nonzero energy are kept and each
+        event becomes
+
+            [START, gap_0, code_0, gap_1, code_1, ..., STOP]
+
+        with patches ordered by ascending global patch id.  gap_i is the step in
+        global patch id since the previous kept patch, counting from -1, so every
+        gap is >= 1 and the patch ids are recovered by a cumulative sum.  Because
+        a gap can never be zero, a generated sequence cannot revisit a patch it
+        has already placed.  Token layout, for n_codes codebook entries and
+        n_patches total patches:
+
+            0                                 START
+            1 .. n_codes                      codes  (code + 1)
+            n_codes+1 .. n_codes+n_patches    gaps   (gap + n_codes)
+            n_codes+n_patches+1               STOP
 
         Parameters
         ----------
-        ak_arr : ak.Array
-            Awkward array of jets, shape (N_jets, <var>, N_features).
-        pp_dict : dict
-            Dictionary with preprocessing information.
-        batch_size : int, optional
-            Batch size for the evaluation loop. The default is 256.
-        pad_length : int, optional
-            Length to which the tokens are padded. The default is 128.
         hide_pbar : bool, optional
             Whether to hide the progress bar. The default is False.
+        add_start_end_tokens : bool, optional
+            Whether to bracket each sequence with START and STOP. The default is
+            False.
 
         Returns
         -------
         ak.Array
-            Awkward array of tokens, shape (N_jets, <var>).
+            Awkward array of token sequences, shape (N_events, <var>).
         """
 
-        ak_output = ak.Array([])
+        if self.data_type == "hit":
 
+            ak_output = ak.Array([])
 
+            with torch.no_grad():
+                if not hide_pbar:
+                    pbar = tqdm(dataloader)
+                else:
+                    pbar = dataloader
 
-        with torch.no_grad():
-            if not hide_pbar:
-                pbar = tqdm(dataloader)
-            else:
-                pbar = dataloader
+                for i, x_batch in enumerate(pbar):
 
-       
-            for i, x_batch in enumerate(pbar):
+                    # move to device
+                    features_batch = x_batch["calo_hit_features"].to(self.device)
+                    mask_batch = x_batch["mask"].to(self.device)
+                    x_particle_reco, vq_out = self.forward(features_batch, mask_batch)
+                    code = vq_out["q"]
 
-                # move to device
-                features_batch = x_batch["calo_hit_features"].to(self.device)
-                mask_batch = x_batch["mask"].to(self.device)
-                x_particle_reco, vq_out = self.forward(features_batch, mask_batch)
-                code = vq_out["q"]
+                    code = code.squeeze(-1).detach().cpu().numpy()
+                    mask_batch = mask_batch.squeeze(-1).detach().cpu().numpy().astype(int)
 
-                code = code.squeeze(-1).detach().cpu().numpy()
-                mask_batch = mask_batch.squeeze(-1).detach().cpu().numpy().astype(int)
+                    for row in range(code.shape[0]):
 
-                for row in range(code.shape[0]):
+                        row_codes = code[row][mask_batch[row] == 1]
+                        if add_start_end_tokens:
 
-                    row_codes = code[row][mask_batch[row] == 1]
-                    if add_start_end_tokens:
-                        
-                        n_tokens = self.model.vqlayer.num_codes
-                        row_codes = np.concatenate([[0], row_codes + 1, [n_tokens + 1]])
+                            n_tokens = self.model.vqlayer.num_codes
+                            row_codes = np.concatenate([[0], row_codes + 1, [n_tokens + 1]])
 
-                    ak_output = ak.concatenate([ak_output, ak.Array([row_codes])], axis = 0)
-       
-        
-        return ak_output
+                        ak_output = ak.concatenate([ak_output, ak.Array([row_codes])], axis = 0)
+
+            return ak_output
+
+        elif self.data_type == "patch":
+
+            n_codes = self.model.vqlayer.num_codes
+            n_patches = self.hparams["vit_kwargs"]["NUM_TOTAL_PATCHES"]
+            stop_token = n_codes + n_patches + 1
+
+            ak_output = []
+
+            self.model.eval()
+
+            with torch.no_grad():
+                if not hide_pbar:
+                    pbar = tqdm(dataloader)
+                else:
+                    pbar = dataloader
+
+                for i, batch in enumerate(pbar):
+
+                    # move to device
+                    batch = {
+                        key: {k: v.to(self.device) for k, v in obj.items()}
+                        for key, obj in batch.items()
+                    }
+                    *_, vq_out = self.model(batch, None, None)
+
+                    # forward() concatenates the shape groups in sorted-key order
+                    # and then sorts by global patch id; vq_out follows that order
+                    keys = sorted(batch.keys())
+                    gids = torch.cat([batch[k]["global_patch_ids"] for k in keys], dim=1)
+                    mask = torch.cat([batch[k]["mask"] for k in keys], dim=1)
+
+                    order = torch.argsort(gids, dim=1)
+                    gids = torch.gather(gids, 1, order).cpu().numpy()
+                    mask = torch.gather(mask, 1, order).cpu().numpy()
+
+                    code = vq_out["q"]
+                    if code.ndim == 3:
+                        code = code.squeeze(2)
+                    code = code.detach().cpu().numpy()
+
+                    for row in range(gids.shape[0]):
+
+                        keep = mask[row] == 1
+                        row_gids = gids[row][keep]
+                        if len(row_gids) == 0:
+                            continue
+
+                        gaps = np.diff(row_gids, prepend=-1)
+                        row_codes = np.stack(
+                            [gaps + n_codes, code[row][keep] + 1], axis=1
+                        ).reshape(-1)
+
+                        if add_start_end_tokens:
+                            row_codes = np.concatenate([[0], row_codes, [stop_token]])
+
+                        ak_output.append(row_codes)
+
+            return ak.from_iter(ak_output)
 
     def reconstruct_ak_tokens(self, tokens_dataloader, hide_pbar=False):
         """Reconstruct tokenized awkward array.

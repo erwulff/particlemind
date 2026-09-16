@@ -13,7 +13,7 @@
 # Environment
 # -----------------------------
 source /scratch/midway3/rmastand/particlemind_env/bin/activate 
-cd /home/rmastand/particlemind
+cd /global/u1/r/rmastand/mlpf-ssl/particlemind
 export HF_TOKEN=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
 export PYTHONPATH=/home/rmastand/particlemind:$PYTHONPATH
 
@@ -23,7 +23,7 @@ commands=(
 
   "python -u src/train-radha.py   --name vqvae_patch   --config_data data_patch    --config_embedder vqvae_patch  --train_embedder"
 
-
+MPICH_GPU_SUPPORT_ENABLED=0 PYTHONPATH=. python -u src/train-radha.py --name vae_patch --config_data data_patch --config_embedder vae_patch --train_embedder
 
 
 

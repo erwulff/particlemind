@@ -3,6 +3,7 @@ import torch
 import matplotlib.pyplot as plt
 from collections import defaultdict
 from matplotlib.patches import Patch
+from matplotlib.colors import LogNorm
 
 # Region colours / labels shared across all patch plots
 _REGION_COLORS = {"barrel": "#1f77b4", "endcap_pos": "#ff7f0e", "endcap_neg": "#2ca02c"}
@@ -488,12 +489,19 @@ def plot_model_patch(
         for b in range(B):
             # model argsorts patches by ascending global_patch_id before the transformer
             all_gids = []
+            all_mask = []
             for key in batch.keys():
                 all_gids.extend(batch[key]["global_patch_ids"][b].cpu().numpy().tolist())
+                all_mask.extend(batch[key]["mask"][b].cpu().numpy().tolist())
             all_gids   = np.array(all_gids)
+            all_mask   = np.array(all_mask)
             sort_order = np.argsort(all_gids)
 
             for rank, orig_idx in enumerate(sort_order):
+                # empty patches are zero-filled in vq_out; counting them piles
+                # fake points at the latent origin and spikes code 0
+                if all_mask[orig_idx] == 0:
+                    continue
                 gid    = int(all_gids[orig_idx])
                 region = gid_region[b].get(gid, "unknown")
                 region_z_q[region].append(master_z_q[b][rank])
@@ -820,15 +828,29 @@ def plot_model_patch(
                 img_d = _flat_to_2d(diff, cpz)
                 vmax_p   = max(img_t.max(), img_r.max(), 1e-9)
                 vmax_dif = max(np.abs(img_d).max(), 1e-9)
-                for col, (img, sub, cmap, vlo, vhi) in enumerate([
-                    (img_t, "True",        "hot", 0,       vmax_p),
-                    (img_r, "Reco",        "hot", 0,       vmax_p),
-                    (img_d, "Reco − True", "bwr", -vmax_dif, vmax_dif),
+                # Log norm for True/Reco — calorimeter deposits are sparse,
+                # linear scale hides low-energy cells when one cell dominates.
+                pos_vals = np.concatenate([img_t[img_t > 0], img_r[img_r > 0]])
+                if pos_vals.size > 0:
+                    log_norm = LogNorm(vmin=pos_vals.min(), vmax=vmax_p)
+                else:
+                    log_norm = None
+                for col, (img, sub, cmap) in enumerate([
+                    (img_t, "True",        "hot"),
+                    (img_r, "Reco",        "hot"),
+                    (img_d, "Reco − True", "bwr"),
                 ]):
                     ax = axarr3[row, col]
-                    im = ax.imshow(img, aspect="auto", cmap=cmap,
-                                   vmin=vlo, vmax=vhi,
-                                   interpolation="nearest", origin="lower")
+                    if col < 2 and log_norm is not None:
+                        im = ax.imshow(img.clip(pos_vals.min() if pos_vals.size > 0 else 0),
+                                       aspect="auto", cmap=cmap, norm=log_norm,
+                                       interpolation="nearest", origin="lower")
+                    else:
+                        vlo = -vmax_dif if col == 2 else 0
+                        vhi = vmax_dif  if col == 2 else vmax_p
+                        im = ax.imshow(img, aspect="auto", cmap=cmap,
+                                       vmin=vlo, vmax=vhi,
+                                       interpolation="nearest", origin="lower")
                     fig3.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
                     ax.set_xlabel("$z$ cell index")
                     ax.set_ylabel("φ cell (layers stacked)")
