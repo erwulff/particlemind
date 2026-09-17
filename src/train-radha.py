@@ -1,11 +1,25 @@
 import awkward as ak
 import numpy as np
+import pyarrow as pa
 
 import os
 from argparse import ArgumentParser
 import torch
 import yaml
 from pathlib import Path
+
+# Reduce peak RSS from parallel Parquet decompression buffers.
+pa.set_cpu_count(1)
+pa.set_io_thread_count(1)
+
+
+def print_mem(label):
+    with open('/proc/self/status') as f:
+        for line in f:
+            if line.startswith('VmRSS'):
+                kb = int(line.split()[1])
+                print(f"[MEM] {label}: {kb / 1024:.1f} MB (RSS)", flush=True)
+                break
 
 
 # Force Hugging Face datasets cache to local scratch (avoid NFS filelock hangs)
@@ -53,6 +67,7 @@ def log_config(logger, args):
 
 
 def main(args):
+    print_mem("start of main")
     torch.multiprocessing.set_start_method('spawn')
 
     with open(f"configs/{args.config_data}.yaml", "r") as file:
@@ -116,6 +131,37 @@ def main(args):
             logger = TensorBoardLogger(args.data_dir, name=args.name)
     
             
+        import gc
+        import ctypes
+        try:
+            _libc = ctypes.CDLL("libc.so.6")
+        except Exception:
+            _libc = None
+
+        from lightning.pytorch.callbacks import Callback
+        class MemCallback(Callback):
+            def on_train_epoch_start(self, trainer, pl_module):
+                print_mem("on_train_epoch_start")
+            def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
+                if batch_idx == 0:
+                    print_mem("first train batch")
+            def on_train_epoch_end(self, trainer, pl_module):
+                print_mem("on_train_epoch_end (before GC)")
+                # Drop Lightning's reference to the exhausted train iterator so
+                # the HF streaming generator and its Arrow buffers can be freed.
+                try:
+                    cl = trainer.fit_loop._combined_loader
+                    if cl is not None and hasattr(cl, '_iterator'):
+                        cl._iterator = None
+                except Exception:
+                    pass
+                gc.collect()
+                if _libc is not None:
+                    _libc.malloc_trim(0)
+                print_mem("on_train_epoch_end (after GC)")
+            def on_validation_epoch_start(self, trainer, pl_module):
+                print_mem("on_validation_epoch_start")
+
         lr_monitor = LearningRateMonitor(logging_interval="step")
         checkpoint_loss = ModelCheckpoint(
             dirpath=f"{args.save_dir}/{project}/best_models/",
@@ -131,7 +177,7 @@ def main(args):
             save_last=True,      # special flag to save the last model automatically
             verbose=True,
         )
-        callbacks = [checkpoint_loss, checkpoint_last, lr_monitor]
+        callbacks = [checkpoint_loss, checkpoint_last, lr_monitor, MemCallback()]
     
         trainer = Trainer(
             logger=logger,
@@ -147,6 +193,7 @@ def main(args):
             precision=configs["trainer_kwargs"]["precision"],
             default_root_dir=f"{args.save_dir}/{project}/",
             gradient_clip_val=1.0,
+            num_sanity_val_steps=0,
             #limit_train_batches=configs["trainer_kwargs"]["limit_train_batches"],
             #limit_val_batches=configs["trainer_kwargs"]["limit_val_batches"],
         )
@@ -247,6 +294,7 @@ def main(args):
             )
 
             collate_func = CollaterPatch()
+            print_mem("after datasets created (patch)")
 
         elif configs_data["data_type"] == "hit":
 
@@ -280,7 +328,7 @@ def main(args):
             collate_fn=collate_func,
             num_workers=configs_data["num_workers"],
             persistent_workers=False,
-            pin_memory=True,
+            pin_memory=False,
         )
         val_loader = DataLoader(
             val_dataset,
@@ -288,7 +336,7 @@ def main(args):
             collate_fn=collate_func,
             num_workers=configs_data["num_workers"],
             persistent_workers=False,
-            pin_memory=True,
+            pin_memory=False,
         )
 
    
@@ -304,6 +352,7 @@ def main(args):
             plot_dir_name=args.name
         )
 
+        print_mem("before trainer.fit")
         trainer.fit(model, train_loader, val_loader)
         #trainer.test(model, val_loader)
 
@@ -341,6 +390,7 @@ def main(args):
             codes = embedder.tokenize_dataloader(file_loader, add_start_end_tokens=True)
 
             # Save
+            os.makedirs(configs_data["tokens_dir"], exist_ok=True)
             ak.to_parquet(codes, configs_data["tokens_dir"] + "/" + file_name)
             print("Saved out to", configs_data["tokens_dir"] + "/" + file_name)
 
@@ -396,6 +446,7 @@ def main(args):
         for file_id in range(configs_data["n_files"]):
             print(f"On file {file_id} of ({file_id + 1} of {configs_data["n_files"]})...")
             samples_tokens = gpt_backbone.generate_n_events_batched(configs_data["n_events_per_file"], configs_data["batch_size_per_gpu"])
+            os.makedirs(configs_data["tokens_dir"], exist_ok=True)
             ak.to_parquet(samples_tokens, configs_data["tokens_dir"] + "/" + f"generated_{file_id}.parquet")
 
      
@@ -424,6 +475,7 @@ def main(args):
             )
 
             samples_events = embedder.reconstruct_ak_tokens(tokens_loader, hide_pbar=False)
+            os.makedirs(configs_data["generated_data_dir"], exist_ok=True)
             ak.to_parquet(samples_events, configs_data["generated_data_dir"] + "/" + f"generated_{file_id}.parquet")
 
         print("Done generating samples!")
@@ -439,7 +491,7 @@ if __name__ == "__main__":
     # parser.add_argument("--gpu_id", type=str, default="0")
 
     parser.add_argument(
-        "--save_dir", type=str, default="/pscratch/sd/r/rmastand/particlemind/"
+        "--save_dir", type=str, default="/scratch/midway3/rmastand/particlemind/"
     )
     parser.add_argument("--name", type=str, default="test")
     parser.add_argument(
